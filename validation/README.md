@@ -57,6 +57,7 @@ From the repository root:
 | `validate_coupling_identification.py` | SmartPI's `CouplingEstimator` recovers the true inter-room conductance (~97%) and the **capacity-ratio asymmetry** `k_ij = G/C_i ≠ k_ji`; learns **multiple simultaneously-open** apertures (the upgrade over the old single-aperture estimator); recovers the open-window **√\|ΔT\| buoyancy** coefficient and folds it correctly (`T_eff = T_ext`). |
 | `validate_control_benefit.py` | Folding the learned coupling into the feed-forward sharply reduces the temperature dip when a door to a cold room opens. |
 | `validate_multiroom_closed_loop.py` | With the **full** SmartPI controllers in closed loop, the **heater commands change as doors open/close** once the coupling is learned: the warm room's heater ramps up, the cool room's eases off, both reverting when the door shuts — vs a coupling-blind group that only reacts and holds a steady offset. |
+| `validate_my_house.py` | A real (anonymized) multi-room layout discovered from a live Home Assistant instance: three heated rooms coupled **through buffer rooms** (a multi-hop chain) plus per-room windows to outside. Confirms SmartPI recovers each door/window conductance on a genuine topology, and surfaces the near-collinear limit where a mid-chain room's doors are usually open together. |
 
 ## Honest caveats
 
