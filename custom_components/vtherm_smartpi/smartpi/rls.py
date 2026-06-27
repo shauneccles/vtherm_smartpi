@@ -154,9 +154,22 @@ class MultiEdgeRLS:
         return self._huber_c / ae
 
     def update(self, regressors: dict[str, float], y: float) -> None:
-        active = [e for e, x in regressors.items() if x != 0.0]
+        # Reject non-finite samples before any math: _clamp() does not bound NaN,
+        # so a single bad residual/regressor could store a non-finite theta.
+        if not isfinite(y):
+            return
+        clean: dict[str, float] = {}
+        for edge_id, raw in regressors.items():
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if isfinite(val) and val != 0.0:
+                clean[edge_id] = val
+        active = list(clean)
         if not active:
             return
+        regressors = clean
         for edge_id in active:
             self.ensure_edge(edge_id)
 

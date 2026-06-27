@@ -156,3 +156,16 @@ def test_save_load_roundtrip():
     assert set(restored.edge_ids()) == {"A", "B"}
     # Off-diagonal cross-covariance is faithfully restored.
     assert abs(restored._P["A"]["B"] - rls._P["A"]["B"]) < 1e-12
+
+
+def test_update_ignores_non_finite_samples():
+    """NaN/inf in y or a regressor must never store a non-finite theta."""
+    rls = _rls()
+    rls.ensure_edge("A")
+    rls.update({"A": float("nan")}, 0.1)     # NaN regressor -> skipped
+    rls.update({"A": -3.0}, float("inf"))    # inf measurement -> skipped
+    assert rls.value("A") == 0.0
+    assert math.isfinite(rls.value("A"))
+    for x in [-3.0, -2.0, -4.0] * 8:          # finite updates still work
+        rls.update({"A": x}, 0.08 * x)
+    assert math.isfinite(rls.value("A")) and rls.value("A") > 0
