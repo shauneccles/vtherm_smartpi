@@ -19,7 +19,13 @@ The heated rooms couple THROUGH the buffers — a genuine multi-hop network. We
 drive the real SmartPI controllers closed-loop against heating-simulator physics
 with a KNOWN conductance per door/window, and check SmartPI recovers it.
 
-Thermal sizes (C, K, P) are reasonable assumptions (HA does not expose them).
+Heat-loss K for the two switch-heated rooms is DATA-GROUNDED from ~14 days of
+real HA history (steady-state energy balance K = P·mean(duty)/mean(T−T_out));
+room_b measured ~4.6× leakier than room_a — it runs its heater >50% of the time
+and still sits below its 22° setpoint. Thermal mass C is assumed (history can't
+separate it), and the live home runs VTherm over_switch/TPI — which does NOT
+learn a/b — so this drives the real SmartPI algorithm on the rooms' measured
+heat loss.
 room_b's door-to-hub and window have no contact sensor in the real home; they
 are modelled with virtual sensors here (in reality a contact sensor or helper is
 needed for SmartPI to gate those edges).
@@ -47,15 +53,23 @@ class _Clock:
     def time(self): return self.t
 CLOCK = _Clock(); algo_mod.time = CLOCK
 
-DT_CTRL, DT_SIM, TEXT = 300.0, 10.0, 8.0   # mild-winter outdoor temp
+DT_CTRL, DT_SIM, TEXT = 300.0, 10.0, 11.0   # observed mean outdoor over the fit window
 
-# --- house topology (C J/°C, K W/°C, P W; live initial temps/setpoints) ------
+# --- house topology -----------------------------------------------------------
+# K (heat-loss W/°C) for the two switch-heated rooms is DATA-GROUNDED: derived
+# from ~14 days of real HA history via the steady-state energy balance
+# K = P*mean(duty)/mean(T - T_out)  (the robust signal; a naive dT/dt fit is
+# swamped by household noise). Observed: room_a ran the heater ~14% of the time
+# at K≈32; room_b ran it ~54% and STILL sat below its 22° target -> K≈148,
+# ~4.6x leakier. room_c (AC-controlled, no switch history) keeps an assumed K.
+# C (thermal mass) is assumed throughout (history can't separate it).
+# t0 = live room temps; targets = live setpoints.
 ROOMS = {
-    "room_a": dict(C=350_000, K=45, P=2000, target=17.0, t0=19.3, heated=True),
-    "room_b": dict(C=400_000, K=65, P=2000, target=22.0, t0=14.9, heated=True),
-    "room_c": dict(C=700_000, K=90, P=3000, target=21.0, t0=20.1, heated=True),
-    "hub":    dict(C=200_000, K=15, heated=False, t0=17.0),
-    "util":   dict(C=150_000, K=25, heated=False, t0=15.0),
+    "room_a": dict(C=350_000, K=32,  P=2000, target=17.0, t0=19.6, heated=True),
+    "room_b": dict(C=400_000, K=148, P=2000, target=22.0, t0=14.5, heated=True),
+    "room_c": dict(C=700_000, K=90,  P=3000, target=21.0, t0=19.2, heated=True),
+    "hub":    dict(C=200_000, K=20,  heated=False, t0=16.0),
+    "util":   dict(C=150_000, K=25,  heated=False, t0=14.0),
 }
 # interior doors: (roomA, roomB, conductance W/°C, aperture sensor entity | None)
 DOORS = [
