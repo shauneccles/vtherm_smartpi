@@ -510,6 +510,17 @@ class SmartPI:
         self._resume_deadtime_hold_started = False
         self._last_integral_guard_mode = "off"
 
+        # Room coupling: clear the learned per-edge coefficients and the slewed
+        # fold state so a user "reset learning" actually relearns coupling from a
+        # clean slate (otherwise stale k_ij keep folding into b_eff and are
+        # re-persisted on the next save).
+        self.coupling_est = CouplingEstimator(self._name)
+        self._cpl_sk_eff = 0.0
+        self._cpl_skt_eff = 0.0
+        self._coupling_b_eff = None
+        self._coupling_text_eff = None
+        self._last_coupling_diag = {}
+
         _LOGGER.info("%s - SmartPI learning and history reset", self._name)
 
     @property

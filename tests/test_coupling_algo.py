@@ -257,3 +257,21 @@ def test_model_aperture_does_not_trip_off():
 
     algo.attach_coupling_view(_View())
     assert algo._coupling_trip_off_active() is False
+
+
+def test_reset_learning_clears_coupling():
+    """A user 'reset learning' must wipe learned coupling + fold state."""
+    algo = make_smartpi()
+    algo.coupling_est._rls.ensure_edge("B")
+    algo.coupling_est._rls.set_value("B", 0.07)
+    algo.coupling_est._kind["B"] = "room"
+    algo._cpl_sk_eff = 0.05
+    algo._cpl_skt_eff = 1.0
+    algo._coupling_b_eff = 0.06
+    algo._coupling_text_eff = 9.0
+    algo._last_coupling_diag = {"any_door_open": True}
+    algo.reset_learning()
+    assert algo.coupling_est.coeff("B") == 0.0
+    assert algo._cpl_sk_eff == 0.0 and algo._cpl_skt_eff == 0.0
+    assert algo._coupling_b_eff is None and algo._coupling_text_eff is None
+    assert algo._last_coupling_diag == {}
