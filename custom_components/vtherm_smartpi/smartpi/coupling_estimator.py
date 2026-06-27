@@ -58,8 +58,9 @@ class CouplingEstimator:
 
     def __init__(self, name: str) -> None:
         self._name = name
-        # κ for outside edges can exceed K_MAX before ×√|Δ|; use the larger cap
-        # as the RLS theta ceiling and re-clamp the instantaneous k at use.
+        # kappa for outside edges can exceed K_MAX before multiplication by
+        # sqrt(|dT|); use the larger cap as the RLS theta ceiling and re-clamp
+        # the instantaneous k at use.
         self._rls = MultiEdgeRLS(
             p0=COUPLING_RLS_P0,
             q=COUPLING_RLS_Q,

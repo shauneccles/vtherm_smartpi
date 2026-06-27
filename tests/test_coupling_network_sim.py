@@ -70,7 +70,8 @@ def test_scenario2_mixed_apertures_learn_and_mesh():
     hass.states.set("sensor.hall_temp", "19.0")
     coord = RoomCouplingCoordinator(hass)
 
-    a = _algo(hass, "A"); b = _algo(hass, "B")
+    a = _algo(hass, "A")
+    b = _algo(hass, "B")
     a.est.a = b.est.a = 0.01
     a.est.b = b.est.b = 0.008
 
@@ -86,7 +87,8 @@ def test_scenario2_mixed_apertures_learn_and_mesh():
         EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="A",
                    aperture_entity_id="binary_sensor.door_ab"),
     ])
-    a.attach_coupling_view(va); b.attach_coupling_view(vb)
+    a.attach_coupling_view(va)
+    b.attach_coupling_view(vb)
 
     # B publishes a warm temperature; A reads it through the mesh.
     b._publish_coupling_snapshot(23.0, 5.0)

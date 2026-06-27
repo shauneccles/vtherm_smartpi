@@ -53,7 +53,7 @@
       },
       "connections": {
         "title": "Room connections",
-        "description": "Optional. Point at this room's power sensor and declare a door connecting it to another SmartPI room. Tick 'Add another connection' to declare more. Adding a connection on one room is enough — it is made bidirectional automatically.",
+        "description": "Optional. Point at this room's power sensor and declare apertures (doors or windows) connecting it to another SmartPI room, a plain temperature sensor, or the outside. Choose the connection type, its aperture sensor, the aperture type, and whether to model the loss or trip heating off when open. Tick 'Add another connection' to declare more. Declaring a connection on one room is enough — room links are made bidirectional automatically.",
         "data": {
           "smart_pi_power_sensor": "Power sensor (watts)",
           "neighbor_vtherm_entity": "Connected room (thermostat)",
@@ -69,7 +69,7 @@
     },
     "error": {
       "invalid_valve_curve": "The valve curve must satisfy minimum opening < knee opening < maximum opening.",
-      "connection_incomplete": "Select both a connected room and a door sensor.",
+      "connection_incomplete": "Each connection needs an aperture sensor plus its target: a connected SmartPI room, a neighbour temperature sensor, or nothing more for an outside window.",
       "connection_self": "A room cannot be connected to itself.",
       "connection_duplicate": "This room is already declared as a connection.",
       "connection_not_smartpi": "The connected room must be a thermostat using the SmartPI algorithm."
@@ -108,7 +108,7 @@
       },
       "connections": {
         "title": "Room connections",
-        "description": "Optional. Point at this room's power sensor and declare a door connecting it to another SmartPI room. Tick 'Add another connection' to declare more. Existing connections are kept; adding a connection on one room makes it bidirectional.",
+        "description": "Optional. Point at this room's power sensor and declare apertures (doors or windows) connecting it to another SmartPI room, a plain temperature sensor, or the outside. Choose the connection type, its aperture sensor, the aperture type, and whether to model the loss or trip heating off when open. Tick 'Add another connection' to declare more. Existing connections are kept; declaring a connection on one room makes room links bidirectional.",
         "data": {
           "smart_pi_power_sensor": "Power sensor (watts)",
           "neighbor_vtherm_entity": "Connected room (thermostat)",
@@ -124,7 +124,7 @@
     },
     "error": {
       "invalid_valve_curve": "The valve curve must satisfy minimum opening < knee opening < maximum opening.",
-      "connection_incomplete": "Select both a connected room and a door sensor.",
+      "connection_incomplete": "Each connection needs an aperture sensor plus its target: a connected SmartPI room, a neighbour temperature sensor, or nothing more for an outside window.",
       "connection_self": "A room cannot be connected to itself.",
       "connection_duplicate": "This room is already declared as a connection.",
       "connection_not_smartpi": "The connected room must be a thermostat using the SmartPI algorithm."

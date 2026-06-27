@@ -20,7 +20,7 @@ The model must learn (tailor itself to) the thermal coupling of each aperture an
 
 Base per-room thermal model (1R1C), learned online by `ABEstimator`:
 
-```
+```text
 dT_i/dt = a_i·u_i − b_i·(T_i − T_ext)
 ```
 
@@ -34,7 +34,7 @@ Current room coupling (`smartpi/room_coupling.py`, `smartpi/coupling_estimator.p
 - `k_ij` is treated as a **structural** property of the doorway: learned only while open and the base model is reliable, otherwise **held** (never decayed). The door-state gate turns the contribution on/off.
 - The **effective-parameter fold** (`compute_effective_params`) collapses any number of simultaneously-open edges exactly into a single equivalent 1R1C reservoir so the rest of the control law is unchanged:
 
-```
+```text
 b_eff = b + Σ_j k_j·open_j
 T_eff = (b·T_ext + Σ_j k_j·T_j·open_j) / b_eff
 ```
@@ -84,14 +84,14 @@ Each declared aperture carries:
 
 For room *i*:
 
-```
+```text
 total_loss(i) = b·(T_i − T_ext)               envelope (closed apertures baked into b)
               + Σ_j k_j·(T_i − T_j)·open_j      each OPEN modelled aperture
 ```
 
 This folds **exactly** (existing `compute_effective_params`, untouched) into:
 
-```
+```text
 b_eff = b + Σ_j k_j·open_j
 T_eff = (b·T_ext + Σ_j k_j·T_j·open_j) / b_eff
 ```
@@ -110,7 +110,7 @@ Because **every node is observed**, the per-room folds compose into a consistent
 
 Each reliable HEAT cycle (`dt > 0`, base model reliable, not calibrating, `T_ext` available) produces one linear equation in the conductances of the currently-open edges:
 
-```
+```text
 m   = (T_i − T_i_prev) / dt                  measured slope (°C/min)
 p   = a·u − b·(T_i − T_ext)                  base prediction (no coupling)
 r   = m − p = Σ_j k_j·x_j + noise
@@ -121,7 +121,7 @@ x_j = −(T_i − T_j)·open_j                     (0 for closed edges)
 
 `r = xᵀθ` is **linear in the coefficient vector θ** (`k_j` for room/sensor edges, `κ_j` for outside/window edges) → solve with **recursive least squares** (covariance `P`, forgetting since the coefficients are structural and slow):
 
-```
+```text
 e = r − xᵀk                       innovation
 g = P x / (λ + xᵀ P x)            gain
 k = project_≥0( k + g·ψ(e) )      ψ = Huber influence (robustness)
@@ -176,7 +176,7 @@ The `RoomCouplingCoordinator` becomes the single source of truth for topology:
 
 Each connection entry extends from `{neighbor_vtherm_entity, connection_door_sensor}` to:
 
-```
+```text
 target_kind:             room | sensor | outside
 neighbor_vtherm_entity:  <uid>       (when target_kind = room)
 neighbor_temp_sensor:    <entity>    (when target_kind = sensor)
@@ -227,7 +227,7 @@ Existing `tests/test_coupling_*.py`, `test_effective_params.py`, `test_room_coup
 | `b_eff`, `T_eff` | folded effective loss / reference | min⁻¹, °C |
 | `open_j` | aperture *j* open indicator | {0,1} |
 | `λ` | RLS forgetting factor | — |
-| `κ_j` | orifice-like coefficient for an outside/window edge (`k_j = κ_j·√|ΔT|`) | min⁻¹·°C⁻⁰·⁵ |
+| `κ_j` | orifice-like coefficient for an outside/window edge (`k_j = κ_j·√\|ΔT\|`) | min⁻¹·°C⁻⁰·⁵ |
 | `P` | RLS covariance | — |
 
 ---
@@ -242,7 +242,7 @@ A deep, adversarially-verified literature benchmark (run `wf_5730c22f-8b6`; 24 p
 | Effective-parameter fold | **Sound** — it is the thermal analogue of **Kron / star-mesh (Schur-complement)** reduction, exact at the instantaneous loss level. Folding *observed* neighbour temps sidesteps the dynamic-node-elimination error; residual error is only one-cycle staleness. | Dörfler & Bullo (arXiv:1102.2950); Time-domain Kron generalization |
 | Identifiability gates (excitation, non-negativity, hold-collinear) | **Sound / well-motivated** — matches the documented collinearity & persistent-excitation failure modes; topology is reconstructable from temperature-only data. **Revised:** gate on condition number / Fisher info, expose "sum-identifiable, split-unidentifiable." | Agbi/Song/Krogh CDC 2012; Vahidi 2004; E&B 2022 (S037877882200617X) |
 | Single global forgetting factor | **Weak** → **revised** to per-edge / directional forgetting + covariance reset; excitation gate demoted to belt-and-braces. Kalman/UKF noted as heavier native alternative. | VDF (Wan/JAS 2021); Vahidi 2004; PMC4962952 / PMC11798724 |
-| Constant-`k` open window (loss linear in ΔT) | **Weakest assumption** → **revised** to `k_window = κ·√|ΔT|` (loss ∝ `ΔT·√|ΔT|`); buoyancy counterflow ∝ `√(g'H)` and discharge coeff `K ≈ 0.40+0.0045·ΔT`. | AIVC airbase_4535 (Brown–Solvason); ASHRAE/EN 16798 single-sided ventilation |
+| Constant-`k` open window (loss linear in ΔT) | **Weakest assumption** → **revised** to `k_window = κ·√\|ΔT\|` (loss ∝ `ΔT·√\|ΔT\|`); buoyancy counterflow ∝ `√(g'H)` and discharge coeff `K ≈ 0.40+0.0045·ΔT`. | AIVC airbase_4535 (Brown–Solvason); ASHRAE/EN 16798 single-sided ventilation |
 | Distributed snapshot-mesh + consensus reconciliation | **Partially supported** — decentralized *identifiability* and neighbour-local distributed RLS (diffusion RLS) are recognized and can match/beat centralized; but snapshot-mesh *dynamics* vs joint EKF were **not** head-to-head benchmarked. Diffusion ≥ consensus noted. | Diffusion RLS (IEEE TSP 2008); Tu & Sayed (arXiv:1205.3993); distributed MPC (arXiv:1902.10259) |
 | Prior art in real thermostats | **No prior art found** for learned inter-room coupling / open-window-loss modelling — Versatile Thermostat does window→OFF only. The room-network model is genuinely novel; novelty cuts both ways (no reference implementation to lean on). | github.com/jmcollin78/versatile_thermostat; better_thermostat |
 
