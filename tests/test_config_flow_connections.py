@@ -44,3 +44,14 @@ def test_room_needs_neighbor_and_aperture():
         CONF_CONN_NEIGHBOR_VTHERM: "climate.bedroom",
         CONF_CONN_APERTURE_SENSOR: "binary_sensor.door_ab",
     }) is None
+
+
+def test_aperture_reuse_rejected():
+    from custom_components.vtherm_smartpi.config_flow import _aperture_already_used
+    from custom_components.vtherm_smartpi.const import CONF_CONN_APERTURE_SENSOR
+    existing = [{CONF_CONN_APERTURE_SENSOR: "binary_sensor.door"}]
+    assert _aperture_already_used("binary_sensor.door", existing) is True
+    assert _aperture_already_used("binary_sensor.other", existing) is False
+    # legacy door-sensor key also counts
+    assert _aperture_already_used(
+        "binary_sensor.leg", [{"connection_door_sensor": "binary_sensor.leg"}]) is True

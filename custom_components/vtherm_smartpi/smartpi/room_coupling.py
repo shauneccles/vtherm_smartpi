@@ -152,6 +152,7 @@ def build_edge_configs(connections):
 
     edges: list[EdgeConfig] = []
     ids: set[str] = set()
+    seen_apertures: set[str] = set()
     for conn in connections or []:
         target_kind = conn.get(CONF_CONN_TARGET_KIND)
         aperture = conn.get(CONF_CONN_APERTURE_SENSOR) or conn.get(
@@ -178,8 +179,15 @@ def build_edge_configs(connections):
                 aperture_type=conn.get(CONF_CONN_APERTURE_TYPE, "door"),
                 open_policy=conn.get(CONF_CONN_OPEN_POLICY, "model"),
             )
+        # One physical aperture (and one neighbour edge) maps to a single
+        # coupling edge. Skip duplicates so the edges list stays in sync with
+        # the id set the estimator/prune path use — otherwise open_edges() would
+        # fold the same opening twice while only one coefficient is kept.
+        if edge.edge_id in ids or edge.aperture_entity_id in seen_apertures:
+            continue
         edges.append(edge)
         ids.add(edge.edge_id)
+        seen_apertures.add(edge.aperture_entity_id)
     return edges, ids
 
 

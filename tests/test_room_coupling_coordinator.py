@@ -272,3 +272,19 @@ def test_room_edge_preserves_window_and_trip_off_policy():
     assert ap.aperture_type == "window" and ap.open_policy == "trip_off"
     e = coord.open_edges("A")[0]
     assert e.aperture_type == "window" and e.open_policy == "trip_off"
+
+
+def test_build_edge_configs_dedupes_neighbor_and_aperture():
+    """A reused neighbour edge_id or a reused aperture sensor is dropped so the
+    edges list stays in sync with the id set."""
+    raw = [
+        {CONF_CONN_NEIGHBOR_VTHERM: "B", CONF_CONN_DOOR_SENSOR: "binary_sensor.door"},
+        {CONF_CONN_NEIGHBOR_VTHERM: "B", CONF_CONN_DOOR_SENSOR: "binary_sensor.door2"},
+        {CONF_CONN_TARGET_KIND: TARGET_OUTSIDE,
+         CONF_CONN_APERTURE_SENSOR: "binary_sensor.door"},
+        {CONF_CONN_TARGET_KIND: TARGET_OUTSIDE,
+         CONF_CONN_APERTURE_SENSOR: "binary_sensor.win"},
+    ]
+    edges, ids = build_edge_configs(raw)
+    assert len(edges) == 2
+    assert ids == {"B", "binary_sensor.win"}

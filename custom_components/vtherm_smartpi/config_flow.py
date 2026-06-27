@@ -318,6 +318,16 @@ def _resolve_neighbor_unique_id(hass: Any, entity_id: str | None) -> str | None:
     return reg_entry.unique_id
 
 
+def _aperture_already_used(aperture: str, existing: list[dict[str, Any]]) -> bool:
+    """True if *aperture* sensor is already referenced by an existing connection."""
+    from .const import CONF_CONN_APERTURE_SENSOR, CONF_CONN_DOOR_SENSOR
+
+    return any(
+        (conn.get(CONF_CONN_APERTURE_SENSOR) or conn.get(CONF_CONN_DOOR_SENSOR)) == aperture
+        for conn in existing
+    )
+
+
 def _validate_connection(
     hass: Any,
     self_unique_id: str | None,
@@ -379,6 +389,10 @@ def _apply_connection_submission(
         struct_err = validate_connection_entry(entry_for_validation)
         if struct_err:
             errors["base"] = struct_err
+        elif aperture and _aperture_already_used(aperture, pending_connections):
+            # One physical aperture must map to one edge; reusing the same
+            # sensor across entries would double-count one opening in the fold.
+            errors["base"] = ERROR_CONNECTION_DUPLICATE
         elif target_kind in (None, CONN_TARGET_ROOM):
             # Legacy room connection path — also validate HA-level constraints
             neighbor_uid = _resolve_neighbor_unique_id(hass, neighbor_entity)
