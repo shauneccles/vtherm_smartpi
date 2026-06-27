@@ -97,7 +97,11 @@ def test_unavailable_neighbor_is_isolated():
     va.publish(_snap(21.0, 100.0))
     vb.publish(_snap(None, 150.0, available=False))
     hass.states.set("binary_sensor.door", "on")
-    assert va.any_open() is False
+    # Door physically open but neighbour unavailable: isolated for the FOLD
+    # (open_edges empty), yet fail safe to COUPLED so base a/b learning freezes
+    # (any_open True). Power BFS still excludes the dead node.
+    assert va.open_edges() == []
+    assert va.any_open() is True
     assert coord.component_power_w("A") == 100.0
 
 
@@ -107,11 +111,12 @@ def test_late_neighbor_resolution():
     va = coord.register_room("A", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="B", aperture_entity_id="binary_sensor.door")])
     hass.states.set("binary_sensor.door", "on")
     va.publish(_snap(21.0, 100.0))
-    # B not registered yet -> edge open but no available neighbour.
-    assert va.any_open() is False
+    # B not registered yet -> aperture open (frozen, fail-safe) but not foldable.
+    assert va.any_open() is True
+    assert va.open_edges() == []
     vb = coord.register_room("B", [])
     vb.publish(_snap(23.0, 150.0))
-    assert va.any_open() is True
+    assert va.open_edges() != []         # now resolvable for the fold
 
 
 def test_unregister_drops_edges():
@@ -235,3 +240,35 @@ def test_component_power_excludes_typed_nodes():
     coord.publish("A", {"t_int": 20.0, "available": True, "power_w": 800.0})
     # Outside is not a registered powered node -> only A's own power counts.
     assert coord.component_power_w("A") == 800.0
+
+
+def test_open_apertures_ignores_resolvability():
+    """A physically-open aperture is reported even when the neighbour is
+    unresolvable (fail-safe gate), while open_edges still excludes it."""
+    hass = _FakeHass()
+    hass.states.set("binary_sensor.door", "on")
+    coord = RoomCouplingCoordinator(hass)
+    coord.register_room("A", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="B",
+                                         aperture_entity_id="binary_sensor.door")])
+    # B never registered/published -> not resolvable for the fold.
+    aps = coord.open_apertures("A")
+    assert [a.edge_id for a in aps] == ["B"]
+    assert coord.open_edges("A") == []
+
+
+def test_room_edge_preserves_window_and_trip_off_policy():
+    """A controlled<->controlled door declared window/trip_off keeps those
+    fields through both open_apertures and open_edges (reconciled across sides)."""
+    hass = _FakeHass()
+    hass.states.set("binary_sensor.door", "on")
+    coord = RoomCouplingCoordinator(hass)
+    coord.register_room("A", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="B",
+                                         aperture_entity_id="binary_sensor.door",
+                                         aperture_type="window", open_policy="trip_off")])
+    coord.register_room("B", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="A",
+                                         aperture_entity_id="binary_sensor.door")])
+    coord.publish("B", {"t_int": 20.0, "available": True})
+    ap = coord.open_apertures("A")[0]
+    assert ap.aperture_type == "window" and ap.open_policy == "trip_off"
+    e = coord.open_edges("A")[0]
+    assert e.aperture_type == "window" and e.open_policy == "trip_off"

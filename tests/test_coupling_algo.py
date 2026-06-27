@@ -8,7 +8,7 @@ and persistence (including the no-coupling regression to identity).
 from unittest.mock import MagicMock
 
 from custom_components.vtherm_smartpi.algo import SmartPI
-from custom_components.vtherm_smartpi.smartpi.room_coupling import ResolvedEdge
+from custom_components.vtherm_smartpi.smartpi.room_coupling import ResolvedEdge, OpenAperture
 from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT
 
 
@@ -221,14 +221,16 @@ def test_closed_is_identity():
 
 def test_trip_off_aperture_forces_off():
     algo = make_smartpi()
-    e = ResolvedEdge(edge_id="patio", target_kind="outside", aperture_type="door",
-                     open_policy="trip_off", neighbor_temp=None, neighbor_power_w=None)
 
     class _View:
         uid = "A"
         def publish(self, snap): pass
         def any_open(self): return True
-        def open_edges(self): return [e]
+        # trip-off must fire from the physically-open aperture even when the edge
+        # is NOT resolvable for the fold (e.g. neighbour temp unavailable).
+        def open_edges(self): return []
+        def open_apertures(self):
+            return [OpenAperture("patio", "outside", "door", "trip_off")]
         def component_power_w(self): return 0.0
 
     algo.attach_coupling_view(_View())
@@ -249,6 +251,8 @@ def test_model_aperture_does_not_trip_off():
         def publish(self, snap): pass
         def any_open(self): return True
         def open_edges(self): return [e]
+        def open_apertures(self):
+            return [OpenAperture("win", "outside", "window", "model")]
         def component_power_w(self): return 0.0
 
     algo.attach_coupling_view(_View())

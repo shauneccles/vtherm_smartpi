@@ -25,7 +25,7 @@ of the control law stays unchanged. See the module docstring math in the plan.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from homeassistant.core import HomeAssistant
@@ -65,23 +65,31 @@ class EdgeConfig:
 class _Edge:
     """Internal bidirectional edge between two room uids.
 
-    ``door_by`` maps the declaring room uid -> its door entity id, so removing a
-    room's declaration cleanly drops only its side; the edge survives as long as
-    at least one side still declares it.
+    ``decl_by`` maps the declaring room uid -> ``(aperture_entity, aperture_type,
+    open_policy)``, so removing a room's declaration cleanly drops only its side;
+    the edge survives as long as at least one side still declares it. Carrying
+    the aperture type/policy here (not just the sensor id) lets a controlled↔
+    controlled door honour a ``window``/``trip_off`` configuration.
     """
 
     key: frozenset
-    door_by: dict[str, str] = field(default_factory=dict)
+    decl_by: dict[str, tuple] = field(default_factory=dict)
 
-    def door_entity(self) -> str | None:
-        """Return the door entity id for this edge (deterministic pick)."""
-        if not self.door_by:
-            return None
-        # Prefer a stable, deterministic choice when both sides declare a door.
-        for uid in sorted(self.door_by):
-            if self.door_by[uid]:
-                return self.door_by[uid]
+    def aperture_entity(self) -> str | None:
+        """Return the aperture sensor id for this edge (deterministic pick)."""
+        for uid in sorted(self.decl_by):
+            ent = self.decl_by[uid][0]
+            if ent:
+                return ent
         return None
+
+    def aperture_type(self) -> str:
+        """Reconcile both declarations: ``window`` if either side declares it."""
+        return "window" if any(d[1] == "window" for d in self.decl_by.values()) else "door"
+
+    def open_policy(self) -> str:
+        """Reconcile both declarations: ``trip_off`` if either side declares it."""
+        return "trip_off" if any(d[2] == "trip_off" for d in self.decl_by.values()) else "model"
 
     def other(self, uid: str) -> str:
         """Return the uid on the opposite side of this edge from *uid*."""
@@ -113,6 +121,17 @@ class ResolvedEdge:
     neighbor_uid: str | None = None
     neighbor_k: float | None = None
     neighbor_reliable: bool = False
+
+
+class OpenAperture(NamedTuple):
+    """A physically-open aperture, regardless of whether its neighbour is
+    currently resolvable for the fold. Used to fail-safe the coupled-learning
+    freeze and the trip-off path."""
+
+    edge_id: str
+    target_kind: str
+    aperture_type: str
+    open_policy: str
 
 
 def build_edge_configs(connections):
@@ -211,11 +230,15 @@ class RoomView:
         self._coord.publish(self._uid, snapshot)
 
     def any_open(self) -> bool:
-        """Return True if any connected door is open with an available neighbour."""
+        """Return True if any connected aperture is physically open (fail-safe)."""
         return self._coord.any_open(self._uid)
 
+    def open_apertures(self) -> list:
+        """Return the physically-open apertures (regardless of resolvability)."""
+        return self._coord.open_apertures(self._uid)
+
     def open_edges(self) -> list[ResolvedEdge]:
-        """Return the resolved open edges for this room this cycle."""
+        """Return the resolved open edges for this room this cycle (fold-usable)."""
         return self._coord.open_edges(self._uid)
 
     def component_power_w(self) -> float:
@@ -251,11 +274,11 @@ class RoomCouplingCoordinator:
 
         # Drop this room's previous declarations from all edges.
         for edge in list(self._edges.values()):
-            if uid in edge.door_by:
-                del edge.door_by[uid]
+            if uid in edge.decl_by:
+                del edge.decl_by[uid]
         # Remove edges nobody declares anymore.
         self._edges = {
-            key: edge for key, edge in self._edges.items() if edge.door_by
+            key: edge for key, edge in self._edges.items() if edge.decl_by
         }
 
         # Apply the new declarations, splitting controlled vs typed.
@@ -269,7 +292,8 @@ class RoomCouplingCoordinator:
                 if edge is None:
                     edge = _Edge(key=key)
                     self._edges[key] = edge
-                edge.door_by[uid] = cfg.aperture_entity_id
+                edge.decl_by[uid] = (cfg.aperture_entity_id, cfg.aperture_type,
+                                     cfg.open_policy)
             else:
                 node.typed_edges.append(cfg)
 
@@ -279,9 +303,9 @@ class RoomCouplingCoordinator:
         """Remove a room and drop its edge declarations."""
         self._nodes.pop(uid, None)
         for edge in list(self._edges.values()):
-            edge.door_by.pop(uid, None)
+            edge.decl_by.pop(uid, None)
         self._edges = {
-            key: edge for key, edge in self._edges.items() if edge.door_by
+            key: edge for key, edge in self._edges.items() if edge.decl_by
         }
 
     # -- snapshots ---------------------------------------------------------
@@ -330,7 +354,7 @@ class RoomCouplingCoordinator:
         resolved: list[ResolvedEdge] = []
         # Controlled (bidirectional) edges.
         for edge in self._edges_for(uid):
-            if not self._is_aperture_open(edge.door_entity()):
+            if not self._is_aperture_open(edge.aperture_entity()):
                 continue
             neighbor_uid = edge.other(uid)
             available, snap = self._neighbor_available(neighbor_uid)
@@ -341,8 +365,8 @@ class RoomCouplingCoordinator:
                 ResolvedEdge(
                     edge_id=neighbor_uid,
                     target_kind=TARGET_ROOM,
-                    aperture_type="door",
-                    open_policy="model",
+                    aperture_type=edge.aperture_type(),
+                    open_policy=edge.open_policy(),
                     neighbor_temp=snap.get("t_int"),
                     neighbor_power_w=snap.get("power_w"),
                     neighbor_uid=neighbor_uid,
@@ -374,24 +398,32 @@ class RoomCouplingCoordinator:
                 )
         return resolved
 
-    def any_open(self, uid: str) -> bool:
-        """True if any modelled aperture (controlled or typed) is open + usable."""
+    def open_apertures(self, uid: str) -> list:
+        """Every PHYSICALLY-open aperture for *uid* (as :class:`OpenAperture`),
+        regardless of whether the neighbour is currently resolvable for the fold.
+
+        This is deliberately distinct from :meth:`open_edges` (which requires a
+        usable neighbour temperature): the coupled-learning freeze and the
+        trip-off path must fail safe — a known-open door must freeze base a/b
+        learning and may trip heating off even if the neighbour snapshot or temp
+        sensor is momentarily unavailable.
+        """
+        out: list = []
         for edge in self._edges_for(uid):
-            if not self._is_aperture_open(edge.door_entity()):
-                continue
-            available, _ = self._neighbor_available(edge.other(uid))
-            if available:
-                return True
+            if self._is_aperture_open(edge.aperture_entity()):
+                out.append(OpenAperture(edge.other(uid), TARGET_ROOM,
+                                        edge.aperture_type(), edge.open_policy()))
         node = self._nodes.get(uid)
         if node is not None:
             for cfg in node.typed_edges:
-                if not self._is_aperture_open(cfg.aperture_entity_id):
-                    continue
-                if cfg.target_kind == TARGET_OUTSIDE:
-                    return True
-                if self._read_temp(cfg.neighbor_temp_sensor) is not None:
-                    return True
-        return False
+                if self._is_aperture_open(cfg.aperture_entity_id):
+                    out.append(OpenAperture(cfg.edge_id, cfg.target_kind,
+                                            cfg.aperture_type, cfg.open_policy))
+        return out
+
+    def any_open(self, uid: str) -> bool:
+        """True if any modelled aperture is physically open (fail-safe gate)."""
+        return bool(self.open_apertures(uid))
 
     def component_power_w(self, uid: str) -> float:
         """Sum power (watts) over the open-door connected component of *uid*.
@@ -415,7 +447,7 @@ class RoomCouplingCoordinator:
                 if isinstance(power, (int, float)):
                     total += float(power)
             for edge in self._edges_for(current):
-                if not self._is_aperture_open(edge.door_entity()):
+                if not self._is_aperture_open(edge.aperture_entity()):
                     continue
                 neighbor_uid = edge.other(current)
                 if neighbor_uid in seen:

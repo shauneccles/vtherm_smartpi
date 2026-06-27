@@ -2456,8 +2456,13 @@ class SmartPI:
                 is_hysteresis=False,
             )
 
-        # Heartbeat learning update
-        if dt_min > 0:
+        # Heartbeat learning update. Freeze base a/b learning the SAME cycle an
+        # aperture is open: the COUPLED governance regime is only recomputed
+        # later (and applied next cycle), so without this an opening door could
+        # contaminate one base sample before the freeze engages. Uses the
+        # fail-safe physical-open check (a known-open door freezes even if the
+        # neighbour is momentarily unavailable).
+        if dt_min > 0 and not self._coupling_any_open():
             self.update_learning(
                 dt_min=dt_min,
                 current_temp=t_int_clean,
@@ -2771,7 +2776,7 @@ class SmartPI:
         if view is None:
             return False
         return any(
-            getattr(e, "open_policy", "model") == "trip_off" for e in view.open_edges()
+            ap.open_policy == "trip_off" for ap in view.open_apertures()
         )
 
     def _publish_coupling_snapshot(
