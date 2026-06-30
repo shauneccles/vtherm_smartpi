@@ -97,3 +97,69 @@ def test_candidate_nodes_controlled_excludes_self_and_non_smartpi():
     assert nodes.controlled == [("vt:uid-play", "Playroom heating")]
     # sensed includes only areas with a temp sensor
     assert nodes.sensed == [("area:sensor.kitchen_sensor_temperature", "Kitchen")]
+
+
+from custom_components.vtherm_smartpi.smartpi.topology import (
+    ENDPOINT_OUTSIDE,
+    ENDPOINT_SKIP,
+    aperture_row_to_connection,
+    endpoint_value_for_current,
+    merge_discovered_connections,
+)
+from custom_components.vtherm_smartpi.const import (
+    CONF_CONN_APERTURE_TYPE,
+    CONF_CONN_NEIGHBOR_TEMP_SENSOR,
+    CONF_CONN_OPEN_POLICY,
+    CONN_TARGET_OUTSIDE,
+    CONN_TARGET_SENSOR,
+)
+
+
+def test_endpoint_value_for_current():
+    assert endpoint_value_for_current(None) == ENDPOINT_SKIP
+    assert endpoint_value_for_current({CONF_CONN_TARGET_KIND: CONN_TARGET_OUTSIDE}) == "outside"
+    assert endpoint_value_for_current(
+        {CONF_CONN_TARGET_KIND: CONN_TARGET_ROOM, CONF_CONN_NEIGHBOR_VTHERM: "u1"}
+    ) == "vt:u1"
+    assert endpoint_value_for_current(
+        {CONF_CONN_TARGET_KIND: CONN_TARGET_SENSOR, CONF_CONN_NEIGHBOR_TEMP_SENSOR: "sensor.k"}
+    ) == "area:sensor.k"
+    # legacy shape (no target_kind, has neighbour vtherm)
+    assert endpoint_value_for_current({CONF_CONN_NEIGHBOR_VTHERM: "u9"}) == "vt:u9"
+
+
+def test_aperture_row_to_connection_variants():
+    assert aperture_row_to_connection("binary_sensor.w", "window", ENDPOINT_SKIP, "model") is None
+    out = aperture_row_to_connection("binary_sensor.w", "window", ENDPOINT_OUTSIDE, "trip_off")
+    assert out == {
+        CONF_CONN_TARGET_KIND: CONN_TARGET_OUTSIDE,
+        CONF_CONN_APERTURE_SENSOR: "binary_sensor.w",
+        CONF_CONN_APERTURE_TYPE: "window",
+        CONF_CONN_OPEN_POLICY: "trip_off",
+    }
+    room = aperture_row_to_connection("binary_sensor.d", "door", "vt:uid-hall", "model")
+    assert room[CONF_CONN_TARGET_KIND] == CONN_TARGET_ROOM
+    assert room[CONF_CONN_NEIGHBOR_VTHERM] == "uid-hall"
+    sens = aperture_row_to_connection("binary_sensor.d", "door", "area:sensor.hall", "model")
+    assert sens[CONF_CONN_TARGET_KIND] == CONN_TARGET_SENSOR
+    assert sens[CONF_CONN_NEIGHBOR_TEMP_SENSOR] == "sensor.hall"
+
+
+def test_merge_preserves_manual_replaces_discovered_drops_skipped():
+    existing = [
+        {CONF_CONN_APERTURE_SENSOR: "binary_sensor.manual", CONF_CONN_TARGET_KIND: CONN_TARGET_OUTSIDE},
+        {CONF_CONN_APERTURE_SENSOR: "binary_sensor.door", CONF_CONN_TARGET_KIND: CONN_TARGET_ROOM,
+         CONF_CONN_NEIGHBOR_VTHERM: "old"},
+        {CONF_CONN_APERTURE_SENSOR: "binary_sensor.gone", CONF_CONN_TARGET_KIND: CONN_TARGET_OUTSIDE},
+    ]
+    discovered_ids = ["binary_sensor.door", "binary_sensor.gone"]
+    produced = [
+        {CONF_CONN_APERTURE_SENSOR: "binary_sensor.door", CONF_CONN_TARGET_KIND: CONN_TARGET_ROOM,
+         CONF_CONN_NEIGHBOR_VTHERM: "new"},
+        # "binary_sensor.gone" was set to Skip -> not in produced -> removed
+    ]
+    merged = merge_discovered_connections(existing, discovered_ids, produced)
+    apertures = sorted(c[CONF_CONN_APERTURE_SENSOR] for c in merged)
+    assert apertures == ["binary_sensor.door", "binary_sensor.manual"]
+    door = next(c for c in merged if c[CONF_CONN_APERTURE_SENSOR] == "binary_sensor.door")
+    assert door[CONF_CONN_NEIGHBOR_VTHERM] == "new"  # replaced, not duplicated

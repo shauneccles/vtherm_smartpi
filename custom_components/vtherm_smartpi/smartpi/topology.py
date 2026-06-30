@@ -116,3 +116,65 @@ def build_candidate_nodes(
         (f"area:{a.temp_sensor}", a.label) for a in areas if a.temp_sensor
     ]
     return CandidateNodes(controlled=controlled, sensed=sensed)
+
+
+ENDPOINT_SKIP = "skip"
+ENDPOINT_OUTSIDE = "outside"
+
+
+def endpoint_value_for_current(current: dict | None) -> str:
+    """Map an existing connection dict to its form-selection value."""
+    if not current:
+        return ENDPOINT_SKIP
+    kind = current.get(CONF_CONN_TARGET_KIND)
+    if kind == CONN_TARGET_OUTSIDE:
+        return ENDPOINT_OUTSIDE
+    if kind == CONN_TARGET_SENSOR:
+        sensor = current.get(CONF_CONN_NEIGHBOR_TEMP_SENSOR)
+        return f"area:{sensor}" if sensor else ENDPOINT_SKIP
+    # room (explicit) or legacy (no target_kind but has a neighbour vtherm)
+    neighbor = current.get(CONF_CONN_NEIGHBOR_VTHERM)
+    return f"vt:{neighbor}" if neighbor else ENDPOINT_SKIP
+
+
+def aperture_row_to_connection(
+    aperture_entity_id: str, aperture_type: str, endpoint_value: str, policy: str
+) -> dict | None:
+    """Translate one wired form row into a connection dict (None when skipped)."""
+    if endpoint_value == ENDPOINT_SKIP or not endpoint_value:
+        return None
+    base = {
+        CONF_CONN_APERTURE_SENSOR: aperture_entity_id,
+        CONF_CONN_APERTURE_TYPE: aperture_type,
+        CONF_CONN_OPEN_POLICY: policy,
+    }
+    if endpoint_value == ENDPOINT_OUTSIDE:
+        return {CONF_CONN_TARGET_KIND: CONN_TARGET_OUTSIDE, **base}
+    if endpoint_value.startswith("vt:"):
+        return {
+            CONF_CONN_TARGET_KIND: CONN_TARGET_ROOM,
+            CONF_CONN_NEIGHBOR_VTHERM: endpoint_value[len("vt:"):],
+            **base,
+        }
+    if endpoint_value.startswith("area:"):
+        return {
+            CONF_CONN_TARGET_KIND: CONN_TARGET_SENSOR,
+            CONF_CONN_NEIGHBOR_TEMP_SENSOR: endpoint_value[len("area:"):],
+            **base,
+        }
+    return None
+
+
+def merge_discovered_connections(
+    existing: list[dict], discovered_ids: list[str], produced: list[dict]
+) -> list[dict]:
+    """Replace discovered apertures with *produced*; keep everything else.
+
+    Connections whose aperture is in *discovered_ids* but absent from *produced*
+    (set to Skip) are dropped. Non-discovered (manual) connections are preserved.
+    """
+    discovered = set(discovered_ids)
+    kept = [
+        c for c in (existing or []) if aperture_id_of(c) not in discovered
+    ]
+    return kept + list(produced)
