@@ -1,17 +1,30 @@
 """Pure-core tests for room-network discovery (no Home Assistant)."""
 
 from custom_components.vtherm_smartpi.smartpi.topology import (
+    ENDPOINT_OUTSIDE,
+    ENDPOINT_SKIP,
     ApertureRecord,
-    DiscoveredAperture,
+    AreaNode,
+    VThermNode,
     aperture_id_of,
+    aperture_row_to_connection,
+    build_candidate_nodes,
+    endpoint_value_for_current,
+    merge_discovered_connections,
+    resolve_effective_area,
     select_apertures,
 )
 from custom_components.vtherm_smartpi.const import (
     CONF_CONN_APERTURE_SENSOR,
+    CONF_CONN_APERTURE_TYPE,
     CONF_CONN_DOOR_SENSOR,
-    CONF_CONN_TARGET_KIND,
+    CONF_CONN_NEIGHBOR_TEMP_SENSOR,
     CONF_CONN_NEIGHBOR_VTHERM,
+    CONF_CONN_OPEN_POLICY,
+    CONF_CONN_TARGET_KIND,
+    CONN_TARGET_OUTSIDE,
     CONN_TARGET_ROOM,
+    CONN_TARGET_SENSOR,
 )
 
 
@@ -69,14 +82,6 @@ def test_aperture_id_of_handles_legacy_key():
     assert aperture_id_of({}) is None
 
 
-from custom_components.vtherm_smartpi.smartpi.topology import (
-    AreaNode,
-    VThermNode,
-    build_candidate_nodes,
-    resolve_effective_area,
-)
-
-
 def test_resolve_effective_area_prefers_entity_then_device():
     assert resolve_effective_area("bedroom", "kitchen") == "bedroom"
     assert resolve_effective_area(None, "kitchen") == "kitchen"
@@ -99,22 +104,6 @@ def test_candidate_nodes_controlled_excludes_self_and_non_smartpi():
     assert nodes.sensed == [("area:sensor.kitchen_sensor_temperature", "Kitchen")]
 
 
-from custom_components.vtherm_smartpi.smartpi.topology import (
-    ENDPOINT_OUTSIDE,
-    ENDPOINT_SKIP,
-    aperture_row_to_connection,
-    endpoint_value_for_current,
-    merge_discovered_connections,
-)
-from custom_components.vtherm_smartpi.const import (
-    CONF_CONN_APERTURE_TYPE,
-    CONF_CONN_NEIGHBOR_TEMP_SENSOR,
-    CONF_CONN_OPEN_POLICY,
-    CONN_TARGET_OUTSIDE,
-    CONN_TARGET_SENSOR,
-)
-
-
 def test_endpoint_value_for_current():
     assert endpoint_value_for_current(None) == ENDPOINT_SKIP
     assert endpoint_value_for_current({CONF_CONN_TARGET_KIND: CONN_TARGET_OUTSIDE}) == "outside"
@@ -126,10 +115,13 @@ def test_endpoint_value_for_current():
     ) == "area:sensor.k"
     # legacy shape (no target_kind, has neighbour vtherm)
     assert endpoint_value_for_current({CONF_CONN_NEIGHBOR_VTHERM: "u9"}) == "vt:u9"
+    assert endpoint_value_for_current({CONF_CONN_TARGET_KIND: CONN_TARGET_SENSOR}) == ENDPOINT_SKIP
+    assert endpoint_value_for_current({CONF_CONN_TARGET_KIND: CONN_TARGET_ROOM}) == ENDPOINT_SKIP
 
 
 def test_aperture_row_to_connection_variants():
     assert aperture_row_to_connection("binary_sensor.w", "window", ENDPOINT_SKIP, "model") is None
+    assert aperture_row_to_connection("binary_sensor.w", "window", "", "model") is None
     out = aperture_row_to_connection("binary_sensor.w", "window", ENDPOINT_OUTSIDE, "trip_off")
     assert out == {
         CONF_CONN_TARGET_KIND: CONN_TARGET_OUTSIDE,
