@@ -44,6 +44,13 @@ from .const import (
     DOMAIN,
 )
 from .smartpi.device_link import target_uses_smartpi
+from .smartpi.topology import (
+    CandidateNodes,
+    DiscoveredAperture,
+    ENDPOINT_OUTSIDE,
+    ENDPOINT_SKIP,
+    endpoint_value_for_current,
+)
 
 ERROR_INVALID_VALVE_CURVE = "invalid_valve_curve"
 ERROR_CONNECTION_INCOMPLETE = "connection_incomplete"
@@ -288,6 +295,56 @@ def build_connections_schema(
             vol.Optional(CONF_ADD_ANOTHER_CONNECTION, default=False): bool,
         }
     )
+
+
+DISCOVERY_POLICY_SUFFIX = "__policy"
+
+
+def endpoint_field_options(nodes: CandidateNodes) -> list[selector.SelectOptionDict]:
+    """Skip + Outside + each controlled VTherm + each sensed area."""
+    options = [
+        selector.SelectOptionDict(value=ENDPOINT_SKIP, label="— Skip —"),
+        selector.SelectOptionDict(value=ENDPOINT_OUTSIDE, label="Outside"),
+    ]
+    options += [selector.SelectOptionDict(value=v, label=lbl) for v, lbl in nodes.controlled]
+    options += [
+        selector.SelectOptionDict(value=v, label=f"{lbl} (sensed)")
+        for v, lbl in nodes.sensed
+    ]
+    return options
+
+
+def build_discovery_schema(
+    discovered: list[DiscoveredAperture], nodes: CandidateNodes
+) -> vol.Schema:
+    """One endpoint + one policy SelectSelector per discovered aperture.
+
+    Fields are keyed by the aperture entity_id (HA renders the key as the label
+    for these dynamically-built fields); the step description lists friendly
+    names + types for context.
+    """
+    options = endpoint_field_options(nodes)
+    fields: dict = {}
+    for ap in discovered:
+        default_endpoint = endpoint_value_for_current(ap.current)
+        default_policy = (ap.current or {}).get(CONF_CONN_OPEN_POLICY, "model")
+        fields[
+            vol.Optional(ap.aperture_entity_id, default=default_endpoint)
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=options, mode=selector.SelectSelectorMode.DROPDOWN
+            )
+        )
+        fields[
+            vol.Optional(
+                ap.aperture_entity_id + DISCOVERY_POLICY_SUFFIX, default=default_policy
+            )
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=["model", "trip_off"], mode=selector.SelectSelectorMode.DROPDOWN
+            )
+        )
+    return vol.Schema(fields)
 
 
 def validate_connection_entry(entry: dict) -> str | None:
