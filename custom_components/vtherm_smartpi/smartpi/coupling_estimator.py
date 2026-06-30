@@ -184,6 +184,15 @@ class CouplingEstimator:
             for edge_id in self._rls.edge_ids()
         }
 
+    def edge_ids(self) -> set[str]:
+        """Return the edge ids currently held in the RLS state.
+
+        Used at startup so the prune keep-set can preserve already-loaded
+        persisted coefficients regardless of registration order (a neighbour
+        room may not have registered its side of a one-sided link yet).
+        """
+        return set(self._rls.edge_ids())
+
     def prune(self, valid_edge_ids: set) -> None:
         self._rls.drop_missing(set(valid_edge_ids))
         for edge_id in list(self._kind):

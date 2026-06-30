@@ -278,13 +278,18 @@ class SmartPIHandler:
                     _LOGGER.debug("%s - SmartPI state loaded", t)
             except Exception as e:
                 _LOGGER.error("%s - Failed to load SmartPI state: %s", t, e)
-        # Drop any persisted coupling edges no longer present in the config.
-        # Keep both this room's own declarations AND edges the coordinator knows
-        # from the neighbour's side: a one-sided room link is declared only by
-        # the neighbour, so pruning against local declarations alone would wipe
-        # this (passive) room's learned coefficient on every restart.
+        # Prune persisted coupling edges, but startup prune intentionally
+        # PRESERVES every persisted coefficient: the keep-set unions this room's
+        # own declarations, edges the coordinator knows from the neighbour's side,
+        # AND the edges already present in the just-loaded estimator state. The
+        # last term makes the prune order-independent — a one-sided room link is
+        # declared only by the neighbour, so if that neighbour has not registered
+        # its edge yet, pruning against the live (partial) topology alone would
+        # permanently drop this passive room's learned coefficient. Removal of
+        # truly-dead edges is therefore NOT done from partial startup topology.
         if t.prop_algorithm and isinstance(t.prop_algorithm, SmartPI):
             keep_edge_ids = set(self._coupling_edge_ids)
+            keep_edge_ids |= t.prop_algorithm.coupling_est.edge_ids()
             try:
                 coordinator = get_coordinator(
                     t.hass, t.hass.data.setdefault(DOMAIN, {})

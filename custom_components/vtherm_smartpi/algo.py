@@ -336,6 +336,11 @@ class SmartPI:
         # --- Room coupling (connected rooms) ---
         self.coupling_est = CouplingEstimator(name)
         self._coupling_view = None  # RoomView, attached by the handler
+        # True when the PREVIOUS recalculation interval was coupled (an aperture
+        # was open). Used to defer base-learning resumption by one interval after
+        # a door closes between ticks, so the first (still-straddling) closed
+        # interval is not learned from.
+        self._coupling_was_open: bool = False
         self._measured_power_w: float | None = None  # watts from this room's power sensor
         self._last_coupling_diag: dict = {}
         # EMA-slewed effective coupling load (smooths b_eff/Text_eff transitions)
@@ -519,6 +524,7 @@ class SmartPI:
         self._cpl_skt_eff = 0.0
         self._coupling_b_eff = None
         self._coupling_text_eff = None
+        self._coupling_was_open = False
         self._last_coupling_diag = {}
 
         _LOGGER.info("%s - SmartPI learning and history reset", self._name)
@@ -2473,26 +2479,42 @@ class SmartPI:
         # contaminate one base sample before the freeze engages. Uses the
         # fail-safe physical-open check (a known-open door freezes even if the
         # neighbour is momentarily unavailable).
-        if dt_min > 0 and not self._coupling_any_open():
-            self.update_learning(
-                dt_min=dt_min,
-                current_temp=t_int_clean,
-                ext_temp=ext_current_temp,
-                u_active=self._committed_on_percent,
-                setpoint_changed=setpoint_changed,
-                hvac_mode=hvac_mode,
-                target_temp=target_temp,
-            )
-        elif self._coupling_any_open() and self.learn_win.active:
-            # An aperture is open and a base-learning window is in progress:
-            # abandon it so a post-close sample is never differenced against a
-            # pre-open sample across the coupled period (the window's stale
-            # _start_ts would otherwise straddle the open interval, where
-            # dt_est.tin_history holds thermally coupled samples). Mirrors the
-            # disqualifying-event reset the LearningWindowManager applies on a
-            # setpoint change. Idempotent: once reset, active is False so later
-            # open ticks no-op; closed ticks are unaffected (regression-safe).
-            self.learn_win.reset()
+        if dt_min > 0:
+            aperture_open = self._coupling_any_open()
+            if aperture_open:
+                # An aperture is open: freeze base a/b learning this interval and
+                # abandon any in-progress window so a post-close sample is never
+                # differenced against a pre-open sample across the coupled period
+                # (the window's stale _start_ts would otherwise straddle the open
+                # interval, where dt_est.tin_history holds thermally coupled
+                # samples). Mirrors the disqualifying-event reset the
+                # LearningWindowManager applies on a setpoint change. Idempotent:
+                # once reset, active is False so later open ticks no-op.
+                if self.learn_win.active:
+                    self.learn_win.reset()
+            elif self._coupling_was_open:
+                # First CLOSED interval after the door shut between ticks: its
+                # dt_min was timed from the previous (coupled) tick, so resuming
+                # learning now would backdate a fresh window's _start_ts (= now -
+                # dt_min) into open time, where dt_est.tin_history still holds the
+                # coupled samples. Defer learning by exactly one interval and drop
+                # any active window so the next window backdates only into
+                # already-closed (clean) time.
+                if self.learn_win.active:
+                    self.learn_win.reset()
+            else:
+                self.update_learning(
+                    dt_min=dt_min,
+                    current_temp=t_int_clean,
+                    ext_temp=ext_current_temp,
+                    u_active=self._committed_on_percent,
+                    setpoint_changed=setpoint_changed,
+                    hvac_mode=hvac_mode,
+                    target_temp=target_temp,
+                )
+            # Remember this interval's coupled state so the NEXT closed interval
+            # can be deferred (a door may close between recalculation ticks).
+            self._coupling_was_open = aperture_open
 
         # --- 4b. Room coupling: learn k_ij, then refresh effective (b_eff,Text_eff) ---
         # Runs before the calibration/hysteresis branches so the thermal twin in

@@ -365,6 +365,64 @@ def test_closed_aperture_runs_learning_and_keeps_window(monkeypatch):
     assert reset_calls == []        # coupling gate did not touch the window
 
 
+def _prime_tick(algo):
+    """Prime the timer so the next calculate() sees dt_min > 0 (skip reboot freeze)."""
+    algo._last_calculate_time = time.monotonic() - 60.0
+
+
+def test_first_closed_interval_after_open_defers_learning(monkeypatch):
+    """Open->close across ticks must NOT learn the first closed interval.
+
+    When a door closes between recalculation ticks, that first 'closed' interval
+    still straddles the coupled period (its dt_min is timed from the previous,
+    coupled tick). Base learning must stay frozen for exactly one interval so the
+    next fresh window backdates only into already-closed (clean) time, never
+    producing a base sample spanning the open period.
+    """
+    algo = make_smartpi()
+    view = _GateView(open_=True)
+    algo.attach_coupling_view(view)
+    learn_calls = []
+    monkeypatch.setattr(algo, "update_learning", lambda **k: learn_calls.append(True))
+
+    # Tick 1: door OPEN -> learning frozen, _coupling_was_open latches True.
+    _prime_tick(algo)
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == []
+    assert algo._coupling_was_open is True
+
+    # Tick 2: door now CLOSED, but this first closed interval still straddles the
+    # coupled period -> learning still deferred (no sample over the open period).
+    view._open = False
+    _prime_tick(algo)
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == []
+    assert algo._coupling_was_open is False
+
+    # Tick 3: still closed -> learning resumes into clean (already-closed) time.
+    _prime_tick(algo)
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == [True]
+
+
+def test_no_aperture_sequence_learns_every_interval(monkeypatch):
+    """Regression: with no aperture ever open, _coupling_was_open stays False and
+    every interval learns (byte-identical to behaviour before the deferral fix)."""
+    algo = make_smartpi()
+    algo.attach_coupling_view(_GateView(open_=False))
+    learn_calls = []
+    monkeypatch.setattr(algo, "update_learning", lambda **k: learn_calls.append(True))
+    for _ in range(3):
+        _prime_tick(algo)
+        algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                       hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == [True, True, True]
+    assert algo._coupling_was_open is False
+
+
 def test_reset_learning_clears_coupling():
     """A user 'reset learning' must wipe learned coupling + fold state."""
     algo = make_smartpi()

@@ -123,6 +123,40 @@ def test_prune_drops_unknown_edges():
     assert est._rls.edge_ids() == ["B"]
 
 
+def test_edge_ids_exposes_persisted_edges():
+    """edge_ids() returns the RLS-held edge ids (the startup keep-set source)."""
+    est = CouplingEstimator("R")
+    est._rls.ensure_edge("B")
+    est._rls.set_value("B", 0.07)
+    assert est.edge_ids() == {"B"}
+
+
+def test_startup_prune_keepset_preserves_orphan_persisted_edge():
+    """Order-independent startup prune: a persisted coefficient for an edge that
+    is NOT in local declarations and NOT yet in the coordinator topology must
+    survive, because the keep-set unions the estimator's own loaded edge ids.
+
+    Reproduces the one-sided-link / passive-room startup ordering bug: room B
+    loads before room A registers the shared edge, so both B's local declarations
+    and the coordinator's view of B are empty.
+    """
+    est = CouplingEstimator("R")
+    est._rls.ensure_edge("B")
+    est._rls.set_value("B", 0.07)
+
+    local_declarations: set[str] = set()    # passive room declares nothing
+    coordinator_topology: set[str] = set()  # neighbour not registered yet
+
+    # Mirror handler.py's keep-set construction (the fix unions edge_ids()).
+    keep_edge_ids = set(local_declarations)
+    keep_edge_ids |= est.edge_ids()
+    keep_edge_ids |= coordinator_topology
+
+    assert "B" in keep_edge_ids             # not dropped from partial topology
+    est.prune(keep_edge_ids)
+    assert est.coeff("B") == 0.07           # coefficient retained
+
+
 def test_coeff_held_when_no_edge_open():
     """A learned edge keeps its coefficient across cycles with nothing open."""
     est = CouplingEstimator("R")
