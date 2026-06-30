@@ -279,8 +279,20 @@ class SmartPIHandler:
             except Exception as e:
                 _LOGGER.error("%s - Failed to load SmartPI state: %s", t, e)
         # Drop any persisted coupling edges no longer present in the config.
+        # Keep both this room's own declarations AND edges the coordinator knows
+        # from the neighbour's side: a one-sided room link is declared only by
+        # the neighbour, so pruning against local declarations alone would wipe
+        # this (passive) room's learned coefficient on every restart.
         if t.prop_algorithm and isinstance(t.prop_algorithm, SmartPI):
-            t.prop_algorithm.coupling_est.prune(self._coupling_edge_ids)
+            keep_edge_ids = set(self._coupling_edge_ids)
+            try:
+                coordinator = get_coordinator(
+                    t.hass, t.hass.data.setdefault(DOMAIN, {})
+                )
+                keep_edge_ids |= coordinator.edge_ids_for(t.unique_id)
+            except Exception:  # pragma: no cover - defensive: never block startup
+                pass
+            t.prop_algorithm.coupling_est.prune(keep_edge_ids)
         self._bind_config_entry_to_device()
 
     async def async_startup(self):

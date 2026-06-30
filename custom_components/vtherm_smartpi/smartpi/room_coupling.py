@@ -25,6 +25,7 @@ of the control law stays unchanged. See the module docstring math in the plan.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -76,12 +77,28 @@ class _Edge:
     decl_by: dict[str, tuple] = field(default_factory=dict)
 
     def aperture_entity(self) -> str | None:
-        """Return the aperture sensor id for this edge (deterministic pick)."""
+        """Return one deterministic aperture sensor id (display/identity only).
+
+        OPEN/CLOSED must NOT be derived from this single pick — use
+        :meth:`aperture_entities` so every declared sensor is consulted.
+        """
+        entities = self.aperture_entities()
+        return entities[0] if entities else None
+
+    def aperture_entities(self) -> list[str]:
+        """Return every distinct declared aperture sensor id for this edge.
+
+        Both sides of a controlled↔controlled edge may declare a (possibly
+        different) sensor; openness must consider ALL of them (open if ANY is
+        on), so a physically-open door is never missed because only the
+        lexicographically-first declarer's sensor was consulted.
+        """
+        seen: list[str] = []
         for uid in sorted(self.decl_by):
             ent = self.decl_by[uid][0]
-            if ent:
-                return ent
-        return None
+            if ent and ent not in seen:
+                seen.append(ent)
+        return seen
 
     def aperture_type(self) -> str:
         """Reconcile both declarations: ``window`` if either side declares it."""
@@ -249,6 +266,10 @@ class RoomView:
         """Return the resolved open edges for this room this cycle (fold-usable)."""
         return self._coord.open_edges(self._uid)
 
+    def edge_ids(self) -> set[str]:
+        """Return all edge ids incident to this room (incl. neighbour-declared)."""
+        return self._coord.edge_ids_for(self._uid)
+
     def component_power_w(self) -> float:
         """Return total power across this room's open-door connected component."""
         return self._coord.component_power_w(self._uid)
@@ -341,6 +362,16 @@ class RoomCouplingCoordinator:
             return False
         return str(state.state).lower() == "on"
 
+    def _is_edge_open(self, edge: _Edge) -> bool:
+        """True if ANY of the edge's declared aperture sensors reads open.
+
+        A controlled↔controlled edge can be declared from both sides with
+        different sensors; openness must fail safe and consider every one.
+        """
+        return any(
+            self._is_aperture_open(ent) for ent in edge.aperture_entities()
+        )
+
     def _read_temp(self, entity_id: str | None) -> float | None:
         if not entity_id:
             return None
@@ -348,21 +379,38 @@ class RoomCouplingCoordinator:
         if state is None:
             return None
         try:
-            return float(state.state)
+            val = float(state.state)
         except (TypeError, ValueError):
             return None
+        return val if isfinite(val) else None
 
     # -- queries -----------------------------------------------------------
 
     def _edges_for(self, uid: str) -> list[_Edge]:
         return [edge for edge in self._edges.values() if uid in edge.key]
 
+    def edge_ids_for(self, uid: str) -> set[str]:
+        """Return the edge ids incident to *uid* as the room itself sees them.
+
+        Mirrors the ``edge_id`` keys :meth:`open_edges` produces (a room edge ->
+        the neighbour uid on the other side; a typed edge -> its own edge_id).
+        Crucially this includes edges declared only by the *neighbour*: a
+        one-sided room link is still incident to this room, so the handler can
+        keep this room's passively-learned coefficient alive across restarts
+        instead of pruning it to zero.
+        """
+        ids: set[str] = {edge.other(uid) for edge in self._edges_for(uid)}
+        node = self._nodes.get(uid)
+        if node is not None:
+            ids.update(cfg.edge_id for cfg in node.typed_edges)
+        return ids
+
     def open_edges(self, uid: str) -> list[ResolvedEdge]:
         """Return resolved open edges (controlled bidirectional + typed)."""
         resolved: list[ResolvedEdge] = []
         # Controlled (bidirectional) edges.
         for edge in self._edges_for(uid):
-            if not self._is_aperture_open(edge.aperture_entity()):
+            if not self._is_edge_open(edge):
                 continue
             neighbor_uid = edge.other(uid)
             available, snap = self._neighbor_available(neighbor_uid)
@@ -418,7 +466,7 @@ class RoomCouplingCoordinator:
         """
         out: list = []
         for edge in self._edges_for(uid):
-            if self._is_aperture_open(edge.aperture_entity()):
+            if self._is_edge_open(edge):
                 out.append(OpenAperture(edge.other(uid), TARGET_ROOM,
                                         edge.aperture_type(), edge.open_policy()))
         node = self._nodes.get(uid)
@@ -455,7 +503,7 @@ class RoomCouplingCoordinator:
                 if isinstance(power, (int, float)):
                     total += float(power)
             for edge in self._edges_for(current):
-                if not self._is_aperture_open(edge.aperture_entity()):
+                if not self._is_edge_open(edge):
                     continue
                 neighbor_uid = edge.other(current)
                 if neighbor_uid in seen:

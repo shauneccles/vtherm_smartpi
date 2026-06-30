@@ -274,6 +274,122 @@ def test_room_edge_preserves_window_and_trip_off_policy():
     assert e.aperture_type == "window" and e.open_policy == "trip_off"
 
 
+def test_non_finite_neighbor_temp_treated_as_unavailable():
+    """A neighbour temp sensor reading nan/inf must be rejected (treated as
+    unavailable) so the non-finite value never propagates into the fold."""
+    hass = _FakeHass()
+    hass.states.set("binary_sensor.door_hall", "on")
+    coord = RoomCouplingCoordinator(hass)
+    coord.register_room("A", [EdgeConfig(target_kind=TARGET_SENSOR,
+                                         aperture_entity_id="binary_sensor.door_hall",
+                                         neighbor_temp_sensor="sensor.hall_temp")])
+    hass.states.set("sensor.hall_temp", "nan")
+    assert coord.open_edges("A") == []
+    hass.states.set("sensor.hall_temp", "inf")
+    assert coord.open_edges("A") == []
+    hass.states.set("sensor.hall_temp", "-inf")
+    assert coord.open_edges("A") == []
+    # A finite value resolves normally.
+    hass.states.set("sensor.hall_temp", "19.5")
+    assert coord.open_edges("A")[0].neighbor_temp == 19.5
+
+
+def test_read_temp_rejects_non_finite():
+    hass = _FakeHass()
+    coord = RoomCouplingCoordinator(hass)
+    hass.states.set("sensor.t", "nan")
+    assert coord._read_temp("sensor.t") is None
+    hass.states.set("sensor.t", "inf")
+    assert coord._read_temp("sensor.t") is None
+    hass.states.set("sensor.t", "20.5")
+    assert coord._read_temp("sensor.t") == 20.5
+
+
+def test_edge_open_if_any_declared_sensor_open():
+    """When both rooms declare the same controlled link with DIFFERENT aperture
+    sensors, the doorway is open if ANY declared sensor is on — the other side's
+    sensor must not be ignored (fail-safe)."""
+    hass = _FakeHass()
+    coord = RoomCouplingCoordinator(hass)
+    coord.register_room("A", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="B",
+                                         aperture_entity_id="binary_sensor.door_a")])
+    coord.register_room("B", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="A",
+                                         aperture_entity_id="binary_sensor.door_b")])
+    coord.publish("A", {"t_int": 20.0, "available": True, "power_w": 100.0})
+    coord.publish("B", {"t_int": 22.0, "available": True, "power_w": 50.0})
+    # A's own declared sensor is off, but B declared a DIFFERENT sensor that is on.
+    hass.states.set("binary_sensor.door_a", "off")
+    hass.states.set("binary_sensor.door_b", "on")
+    assert coord.any_open("A") is True
+    assert [a.edge_id for a in coord.open_apertures("A")] == ["B"]
+    assert len(coord.open_edges("A")) == 1
+    # Power BFS must also see the doorway open.
+    assert coord.component_power_w("A") == 150.0
+
+
+def test_edge_closed_only_when_all_declared_sensors_closed():
+    hass = _FakeHass()
+    coord = RoomCouplingCoordinator(hass)
+    coord.register_room("A", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="B",
+                                         aperture_entity_id="binary_sensor.door_a")])
+    coord.register_room("B", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="A",
+                                         aperture_entity_id="binary_sensor.door_b")])
+    coord.publish("A", {"t_int": 20.0, "available": True})
+    coord.publish("B", {"t_int": 22.0, "available": True})
+    hass.states.set("binary_sensor.door_a", "off")
+    hass.states.set("binary_sensor.door_b", "off")
+    assert coord.any_open("A") is False
+    assert coord.open_edges("A") == []
+
+
+def test_edge_ids_for_includes_passive_side_link():
+    """A one-sided room link (only A declares it) must still be reported as an
+    incident edge for the passive room B, so the handler can keep B's learned
+    coefficient (keyed by A) across restarts."""
+    hass = _FakeHass()
+    coord = RoomCouplingCoordinator(hass)
+    coord.register_room("A", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="B",
+                                         aperture_entity_id="binary_sensor.door")])
+    coord.register_room("B", [])  # B declares nothing
+    assert coord.edge_ids_for("A") == {"B"}
+    assert coord.edge_ids_for("B") == {"A"}
+
+
+def test_edge_ids_for_includes_typed_edges():
+    hass = _FakeHass()
+    coord = RoomCouplingCoordinator(hass)
+    coord.register_room("A", [
+        EdgeConfig(target_kind=TARGET_OUTSIDE,
+                   aperture_entity_id="binary_sensor.window_1"),
+        EdgeConfig(target_kind=TARGET_SENSOR,
+                   aperture_entity_id="binary_sensor.door_hall",
+                   neighbor_temp_sensor="sensor.hall_temp"),
+    ])
+    assert coord.edge_ids_for("A") == {"binary_sensor.window_1", "binary_sensor.door_hall"}
+
+
+def test_passive_side_coefficient_survives_prune_keepset():
+    """End-to-end of the handler prune fix: the passive room's learned
+    coefficient survives when the keep-set unions local ids with the
+    coordinator's incident edge ids."""
+    from custom_components.vtherm_smartpi.smartpi.coupling_estimator import (
+        CouplingEstimator,
+    )
+    hass = _FakeHass()
+    coord = RoomCouplingCoordinator(hass)
+    coord.register_room("A", [EdgeConfig(target_kind=TARGET_ROOM, neighbor_uid="B",
+                                         aperture_entity_id="binary_sensor.door")])
+    coord.register_room("B", [])  # one-sided: B declares nothing
+    est = CouplingEstimator("B")
+    est.load_state({"edges": {"A": {"k": 0.05, "n_ok": 10}}})
+    assert est.coeff("A") > 0.0
+    local_ids_for_b: set[str] = set()  # B has no local declarations
+    # OLD behaviour (prune against local ids only) would drop "A":
+    keep = set(local_ids_for_b) | coord.edge_ids_for("B")
+    est.prune(keep)
+    assert est.coeff("A") > 0.0  # passive-side coefficient preserved
+
+
 def test_build_edge_configs_dedupes_neighbor_and_aperture():
     """A reused neighbour edge_id or a reused aperture sensor is dropped so the
     edges list stays in sync with the id set."""
