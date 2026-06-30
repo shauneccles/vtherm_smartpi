@@ -49,7 +49,12 @@ from .smartpi.topology import (
     DiscoveredAperture,
     ENDPOINT_OUTSIDE,
     ENDPOINT_SKIP,
+    aperture_row_to_connection,
+    discover_candidate_nodes,
+    discover_room_apertures,
     endpoint_value_for_current,
+    merge_discovered_connections,
+    resolve_room_area,
 )
 
 ERROR_INVALID_VALVE_CURVE = "invalid_valve_curve"
@@ -345,6 +350,30 @@ def build_discovery_schema(
             )
         )
     return vol.Schema(fields)
+
+
+def build_discovery_connections(
+    user_input: dict[str, Any],
+    discovered: list[DiscoveredAperture],
+    nodes: CandidateNodes,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Translate a discovery-form submission into validated connection dicts."""
+    produced: list[dict[str, Any]] = []
+    errors: dict[str, str] = {}
+    for ap in discovered:
+        endpoint = user_input.get(ap.aperture_entity_id, ENDPOINT_SKIP)
+        policy = user_input.get(ap.aperture_entity_id + DISCOVERY_POLICY_SUFFIX, "model")
+        conn = aperture_row_to_connection(
+            ap.aperture_entity_id, ap.aperture_type, endpoint, policy
+        )
+        if conn is None:
+            continue
+        err = validate_connection_entry(conn)
+        if err:
+            errors[ap.aperture_entity_id] = err
+            continue
+        produced.append(conn)
+    return produced, errors
 
 
 def validate_connection_entry(entry: dict) -> str | None:
@@ -757,11 +786,63 @@ class SmartPIOptionsFlow(OptionsFlow):
         self._pending_power_sensor: str | None = None
 
     async def _finish_or_connections(self, data: dict[str, Any]):
-        """Route to the connections step for per-thermostat entries, else finish."""
+        """Route to the connections menu for per-thermostat entries, else finish."""
         self._pending_options_data = data
         if self._config_entry.data.get(CONF_TARGET_VTHERM):
-            return await self.async_step_connections()
+            return await self.async_step_connections_menu()
         return self.async_create_entry(title="", data=data)
+
+    async def async_step_connections_menu(self, user_input: dict[str, Any] | None = None):
+        """Choose between guided discovery, manual editing, or finishing."""
+        return self.async_show_menu(
+            step_id="connections_menu",
+            menu_options=["discover_connections", "connections", "finish_connections"],
+        )
+
+    async def async_step_finish_connections(self, user_input: dict[str, Any] | None = None):
+        """Save options without changing connections."""
+        data = dict(self._pending_options_data or {})
+        return self.async_create_entry(title="", data=data)
+
+    async def async_step_discover_connections(
+        self, user_input: dict[str, Any] | None = None
+    ):
+        """Auto-discover this room's apertures and wire their far endpoints."""
+        data = dict(self._pending_options_data or {})
+        self_uid = self._config_entry.data.get(CONF_TARGET_VTHERM)
+        existing = list(data.get(CONF_SMART_PI_CONNECTIONS, []) or [])
+
+        area_id = resolve_room_area(self.hass, self_uid)
+        if not area_id:
+            return self.async_abort(reason="vtherm_no_area")
+
+        discovered = discover_room_apertures(self.hass, area_id, existing)
+        if not discovered:
+            return self.async_abort(reason="no_apertures_found")
+
+        nodes = discover_candidate_nodes(self.hass, self_uid)
+
+        if user_input is not None:
+            produced, errors = build_discovery_connections(user_input, discovered, nodes)
+            if errors:
+                return self.async_show_form(
+                    step_id="discover_connections",
+                    data_schema=build_discovery_schema(discovered, nodes),
+                    errors=errors,
+                )
+            discovered_ids = [a.aperture_entity_id for a in discovered]
+            data[CONF_SMART_PI_CONNECTIONS] = merge_discovered_connections(
+                existing, discovered_ids, produced
+            )
+            return self.async_create_entry(title="", data=data)
+
+        return self.async_show_form(
+            step_id="discover_connections",
+            data_schema=build_discovery_schema(discovered, nodes),
+            description_placeholders={
+                "apertures": ", ".join(f"{a.name} ({a.aperture_type})" for a in discovered)
+            },
+        )
 
     async def async_step_connections(self, user_input: dict[str, Any] | None = None):
         """Edit this room's power sensor and inter-room connections."""

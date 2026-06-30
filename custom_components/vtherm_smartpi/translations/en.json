@@ -120,6 +120,19 @@
           "open_policy": "When open: model the loss or trip off",
           "add_another_connection": "Add another connection"
         }
+      },
+      "connections_menu": {
+        "title": "Room connections",
+        "menu_options": {
+          "discover_connections": "Discover room connections",
+          "connections": "Edit connections manually",
+          "finish_connections": "Done — keep current connections"
+        }
+      },
+      "discover_connections": {
+        "title": "Discover room connections",
+        "description": "Set the far endpoint for each door/window found in this room: {apertures}. Leave one on \"Skip\" to ignore it.",
+        "data": {}
       }
     },
     "error": {
@@ -128,6 +141,10 @@
       "connection_self": "A room cannot be connected to itself.",
       "connection_duplicate": "This room is already declared as a connection.",
       "connection_not_smartpi": "The connected room must be a thermostat using the SmartPI algorithm."
+    },
+    "abort": {
+      "vtherm_no_area": "Assign this thermostat to an area in Home Assistant, then re-run discovery.",
+      "no_apertures_found": "No door/window sensors were found in this room's area. Use \"Edit connections manually\" to add one."
     }
   }
 }

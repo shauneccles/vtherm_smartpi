@@ -120,6 +120,19 @@
           "open_policy": "À l'ouverture : modéliser la perte ou couper",
           "add_another_connection": "Ajouter une autre connexion"
         }
+      },
+      "connections_menu": {
+        "title": "Connexions de la pièce",
+        "menu_options": {
+          "discover_connections": "Découvrir les connexions",
+          "connections": "Modifier manuellement les connexions",
+          "finish_connections": "Terminer — conserver les connexions actuelles"
+        }
+      },
+      "discover_connections": {
+        "title": "Découvrir les connexions",
+        "description": "Définissez l'extrémité distante pour chaque porte/fenêtre trouvée dans cette pièce : {apertures}. Laissez « Ignorer » pour ne pas inclure une ouverture.",
+        "data": {}
       }
     },
     "error": {
@@ -128,6 +141,10 @@
       "connection_self": "Une pièce ne peut pas être connectée à elle-même.",
       "connection_duplicate": "Cette pièce est déjà déclarée comme connexion.",
       "connection_not_smartpi": "La pièce connectée doit être un thermostat utilisant l'algorithme SmartPI."
+    },
+    "abort": {
+      "vtherm_no_area": "Affectez ce thermostat à une pièce dans Home Assistant, puis relancez la découverte.",
+      "no_apertures_found": "Aucun capteur de porte/fenêtre n'a été trouvé dans la pièce associée à ce thermostat. Utilisez « Modifier manuellement les connexions » pour en ajouter un."
     }
   }
 }
