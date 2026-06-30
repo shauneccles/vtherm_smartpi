@@ -1,6 +1,6 @@
 """Validate SmartPI's coupling IDENTIFICATION against independent physics.
 
-The simulator's SimpleThermalModel is  C·dT/dt = Q − K·(T−T_ext) — the exact
+The simulator's SimpleThermalModel is  C·dT/dt = Q - K·(T-T_ext) — the exact
 1R1C form SmartPI learns — so we can couple rooms with a KNOWN physical
 conductance and check that SmartPI's real CouplingEstimator recovers it.
 
@@ -72,9 +72,13 @@ def scenario1(G_door=100.0):
     kA_t, kB_t = k_true(G_door, A.C), k_true(G_door, B.C)
     print("\n=== Scenario 1: two coupled rooms (capacity-ratio asymmetry) ===")
     print(f"  ground truth : k_AB={kA_t:.4f}  k_BA={kB_t:.4f} /min   (C_A/C_B = {A.C/B.C:.2f})")
-    print(f"  learned      : k_AB={kA:.4f} ({100*kA/kA_t:.0f}%)  k_BA={kB:.4f} ({100*kB/kB_t:.0f}%)")
-    print(f"  asymmetry    : learned k_BA/k_AB={kB/kA:.2f}  vs truth {kB_t/kA_t:.2f}  "
-          f"-> {'RECOVERED' if abs((kB/kA)/(kB_t/kA_t)-1) < 0.15 else 'MISSED'}")
+    if abs(kA) < 1e-12:
+        print(f"  learned      : k_AB≈0 (identification failed)  k_BA={kB:.4f} ({100*kB/kB_t:.0f}%)")
+        print("  asymmetry    : ratio n/a (k_AB≈0, identification failed) -> MISSED")
+    else:
+        print(f"  learned      : k_AB={kA:.4f} ({100*kA/kA_t:.0f}%)  k_BA={kB:.4f} ({100*kB/kB_t:.0f}%)")
+        print(f"  asymmetry    : learned k_BA/k_AB={kB/kA:.2f}  vs truth {kB_t/kA_t:.2f}  "
+              f"-> {'RECOVERED' if abs((kB/kA)/(kB_t/kA_t)-1) < 0.15 else 'MISSED'}")
 
 
 def scenario2(door_pattern, label, G1=100.0, G2=80.0):

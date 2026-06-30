@@ -20,8 +20,8 @@ drive the real SmartPI controllers closed-loop against heating-simulator physics
 with a KNOWN conductance per door/window, and check SmartPI recovers it.
 
 Heat-loss K for the two switch-heated rooms is DATA-GROUNDED from ~14 days of
-real HA history (steady-state energy balance K = P·mean(duty)/mean(T−T_out));
-room_b measured ~4.6× leakier than room_a — it runs its heater >50% of the time
+real HA history (steady-state energy balance K = P·mean(duty)/mean(T-T_out));
+room_b measured ~4.6x leakier than room_a — it runs its heater >50% of the time
 and still sits below its 22° setpoint. Thermal mass C is assumed (history can't
 separate it), and the live home runs VTherm over_switch/TPI — which does NOT
 learn a/b — so this drives the real SmartPI algorithm on the rooms' measured

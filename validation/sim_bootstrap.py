@@ -15,7 +15,9 @@ Resolution order for the simulator source:
   3. A fresh shallow clone of the pinned commit (requires git + network once).
 
 If none of those work (e.g. offline with no cache), a RuntimeError explains how
-to provide the simulator manually.
+to provide the simulator manually.  Set ``HEATING_SIMULATOR_ALLOW_UNPINNED=1``
+to allow a last-resort fallback to the unversioned default-branch tip (not
+recommended; results may differ from the pinned validated configuration).
 """
 from __future__ import annotations
 
@@ -85,19 +87,33 @@ def simulator_path() -> Path:
     if _looks_like_simulator(cache):
         return cache
 
-    # Try a pinned shallow fetch, then fall back to the default-branch tip.
+    # Try a pinned shallow fetch; fail closed on failure (supply-chain risk).
+    # Set HEATING_SIMULATOR_ALLOW_UNPINNED=1 to allow the unpinned-tip fallback.
     import shutil
 
     if _fetch_pinned(cache):
         return cache
     shutil.rmtree(cache, ignore_errors=True)
-    if _fetch_tip(cache):
-        sys.stderr.write(
-            "[validation] WARNING: could not fetch pinned simulator commit "
-            f"{SIMULATOR_PINNED_SHA[:10]}; using the latest default-branch tip "
-            "(results may differ slightly).\n"
+    if os.environ.get("HEATING_SIMULATOR_ALLOW_UNPINNED", "").strip() not in ("", "0"):
+        if _fetch_tip(cache):
+            sys.stderr.write(
+                "[validation] WARNING: could not fetch pinned simulator commit "
+                f"{SIMULATOR_PINNED_SHA[:10]}; using the latest default-branch tip "
+                "(results may differ slightly; set HEATING_SIMULATOR_ALLOW_UNPINNED=0 "
+                "to disable this fallback).\n"
+            )
+            return cache
+    else:
+        raise RuntimeError(
+            f"Could not fetch pinned heating-simulator commit {SIMULATOR_PINNED_SHA[:10]}.\n"
+            "Refusing to fall back to the unpinned default-branch tip (supply-chain risk).\n"
+            "Fix it one of these ways:\n"
+            f"  • git clone {SIMULATOR_URL} somewhere, check out {SIMULATOR_PINNED_SHA},\n"
+            "    then set HEATING_SIMULATOR_PATH=/that/path\n"
+            f"  • or place a checkout of that commit at {cache}\n"
+            "To allow an unpinned fallback (not recommended): "
+            "HEATING_SIMULATOR_ALLOW_UNPINNED=1 python validation/..."
         )
-        return cache
 
     raise RuntimeError(
         "Could not obtain the heating-simulator (no cache, and git/network "

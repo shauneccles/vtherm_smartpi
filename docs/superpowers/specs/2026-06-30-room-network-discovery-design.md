@@ -69,7 +69,7 @@ sensor (a sensor is required, so an aperture cannot be mapped until its sensor e
 
 Three pieces, separated so the inference logic is testable without the HA config-flow machinery.
 
-```
+```text
 ┌─────────────────────────────┐     ┌──────────────────────────────┐     ┌────────────────────┐
 │ smartpi/topology.py         │     │ config_flow.py               │     │ smart_pi_connections│
 │ (pure discovery, no writes) │ --> │ async_step_discover_         │ --> │ (per-entry list)   │

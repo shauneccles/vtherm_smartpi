@@ -29,7 +29,7 @@ def simulate(aware):
     integral, t, devs = 0.0, 0.0, []
     Kp, Ki = 0.25, 0.0010
     for _ in range(int(6 * 3600 / DT_CTRL)):          # 6 hours
-        door = 2.0 * 3600 <= t < 4.0 * 3600           # door open hours 2–4
+        door = 2.0 * 3600 <= t < 4.0 * 3600           # door open hours 2-4
         Ta, Tb = A.temperature, B.temperature
         if aware and door:
             k_learned = 0.97 * k_door                 # value SmartPI actually learns
