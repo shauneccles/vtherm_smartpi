@@ -4,8 +4,16 @@ import voluptuous as vol
 
 from custom_components.vtherm_smartpi.config_flow import (
     DISCOVERY_POLICY_SUFFIX,
+    build_discovery_connections,
     build_discovery_schema,
     endpoint_field_options,
+)
+from custom_components.vtherm_smartpi.const import (
+    CONF_CONN_APERTURE_SENSOR,
+    CONF_CONN_NEIGHBOR_VTHERM,
+    CONF_CONN_TARGET_KIND,
+    CONN_TARGET_OUTSIDE,
+    CONN_TARGET_ROOM,
 )
 from custom_components.vtherm_smartpi.smartpi.topology import (
     CandidateNodes,
@@ -44,18 +52,6 @@ def test_schema_has_endpoint_and_policy_per_aperture_with_defaults():
     assert defaults["binary_sensor.bedroom_door"] == ENDPOINT_OUTSIDE
     # A policy field exists per aperture, defaulting to "model"
     assert defaults["binary_sensor.bedroom_window" + DISCOVERY_POLICY_SUFFIX] == "model"
-
-
-from custom_components.vtherm_smartpi.config_flow import (  # noqa: E402
-    build_discovery_connections,
-)
-from custom_components.vtherm_smartpi.const import (  # noqa: E402
-    CONF_CONN_APERTURE_SENSOR,
-    CONF_CONN_NEIGHBOR_VTHERM,
-    CONF_CONN_TARGET_KIND,
-    CONN_TARGET_OUTSIDE,
-    CONN_TARGET_ROOM,
-)
 
 
 def test_build_discovery_connections_maps_rows():
