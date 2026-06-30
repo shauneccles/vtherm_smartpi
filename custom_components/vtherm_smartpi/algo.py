@@ -2777,7 +2777,13 @@ class SmartPI:
             self._measured_power_w = None
 
     def _coupling_any_open(self) -> bool:
-        """Return True when a connected door is open with an available neighbour."""
+        """Return True if any connected aperture is PHYSICALLY open (fail-safe).
+
+        Deliberately independent of neighbour availability: a known-open door
+        must freeze base a/b learning and drive the COUPLED regime even when the
+        neighbour snapshot/temperature is momentarily missing. Callers (the
+        same-cycle learning gate, regime classification) rely on this.
+        """
         view = self._coupling_view
         return bool(view.any_open()) if view is not None else False
 
