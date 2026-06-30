@@ -13,13 +13,11 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from datetime import timedelta
 
 from .algo import SmartPI
-from .cycle_utils import calculate_cycle_times
 from .smartpi.const import (
     SMARTPI_RECALC_INTERVAL_SEC,
     SmartPIPhase,
     SmartPICalibrationPhase,
     SmartPICalibrationResult,
-    NEAR_BAND_HYSTERESIS_C,
 )
 from .smartpi.room_coupling import build_edge_configs, get_coordinator
 from .const import (
@@ -373,7 +371,6 @@ class SmartPIHandler:
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""
         t = self._thermostat
-        from datetime import datetime
         from .smartpi.guards import GuardAction
 
         algo = t.prop_algorithm if isinstance(t.prop_algorithm, SmartPI) else None

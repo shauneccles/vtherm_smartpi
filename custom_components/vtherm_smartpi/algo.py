@@ -2214,9 +2214,6 @@ class SmartPI:
             reliable_cap = 1.0 if self._tau_reliable else self.ff_scale_unreliable_max
             warmup_scale = clamp(reliable_cap * learn_scale * time_scale, 0.0, 1.0)
 
-        # Save previous FF state before computing the new FFResult
-        prev_ff_result = self._last_ff_result
-
         # --- FFv2: nominal FF1 + FF2 path (basis for FF3) ---
         nominal_ff_result = compute_ff(
             k_ff=k_ff,
@@ -2719,7 +2716,6 @@ class SmartPI:
         self._last_actuator_applied = self._actuator_on_percent
 
         # --- 13. Store the candidate output only (AW tracking deferred to on_cycle_completed) ---
-        prev_deadtime_hold = self._prev_deadtime_hold
         self._prev_deadtime_hold = self.in_deadtime_window
         self.ctl.finalize_cycle(u_limited, u_final)
 
