@@ -8,6 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
+from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+
+from .device_link import VT_DOMAIN, target_uses_smartpi
+
 from ..const import (
     CONF_CONN_APERTURE_SENSOR,
     CONF_CONN_APERTURE_TYPE,
@@ -178,3 +185,81 @@ def merge_discovered_connections(
         c for c in (existing or []) if aperture_id_of(c) not in discovered
     ]
     return kept + list(produced)
+
+
+# ---------------------------------------------------------------------------
+# HA registry adapters (thin wrappers — all logic stays in pure core above)
+# ---------------------------------------------------------------------------
+
+
+def _entity_effective_area(hass, entity_entry) -> str | None:
+    """Entity area_id, else its device's area_id."""
+    device_area = None
+    if entity_entry.device_id:
+        device = dr.async_get(hass).async_get(entity_entry.device_id)
+        device_area = device.area_id if device else None
+    return resolve_effective_area(entity_entry.area_id, device_area)
+
+
+def _entity_label(entity_entry) -> str:
+    return entity_entry.name or entity_entry.original_name or entity_entry.entity_id
+
+
+def resolve_room_area(hass, vtherm_unique_id: str) -> str | None:
+    """The VTherm's area (entity area_id, else device area_id). None if unset."""
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, vtherm_unique_id)
+    if not entity_id:
+        return None
+    entry = registry.async_get(entity_id)
+    if entry is None:
+        return None
+    return _entity_effective_area(hass, entry)
+
+
+def discover_room_apertures(hass, area_id: str, existing: list[dict]):
+    """Discover this room's door/window sensors from the registries."""
+    registry = er.async_get(hass)
+    records: list[ApertureRecord] = []
+    for entry in registry.entities.values():
+        if entry.domain != "binary_sensor":
+            continue
+        dc = entry.device_class or entry.original_device_class
+        records.append(
+            ApertureRecord(
+                entity_id=entry.entity_id,
+                name=_entity_label(entry),
+                effective_device_class=dc,
+                effective_area_id=_entity_effective_area(hass, entry),
+                platform=entry.platform,
+            )
+        )
+    return select_apertures(records, area_id, existing)
+
+
+def discover_candidate_nodes(hass, self_uid: str | None) -> CandidateNodes:
+    """Far-endpoint choices: SmartPI VTherms (excl. self) + areas with a temp sensor."""
+    registry = er.async_get(hass)
+    vtherms: list[VThermNode] = []
+    for entry in registry.entities.values():
+        if entry.domain != CLIMATE_DOMAIN or entry.platform != VT_DOMAIN:
+            continue
+        if not entry.unique_id:
+            continue
+        vtherms.append(
+            VThermNode(
+                unique_id=entry.unique_id,
+                label=_entity_label(entry),
+                is_smartpi=target_uses_smartpi(hass, entry.unique_id),
+            )
+        )
+    areas: list[AreaNode] = []
+    for area in ar.async_get(hass).async_list_areas():
+        areas.append(
+            AreaNode(
+                area_id=area.id,
+                label=area.name,
+                temp_sensor=getattr(area, "temperature_entity_id", None),
+            )
+        )
+    return build_candidate_nodes(vtherms, areas, self_uid)
