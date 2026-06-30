@@ -49,6 +49,7 @@ from .smartpi.topology import (
     DiscoveredAperture,
     ENDPOINT_OUTSIDE,
     ENDPOINT_SKIP,
+    aperture_id_of,
     aperture_row_to_connection,
     discover_candidate_nodes,
     discover_room_apertures,
@@ -355,11 +356,26 @@ def build_discovery_schema(
 def build_discovery_connections(
     user_input: dict[str, Any],
     discovered: list[DiscoveredAperture],
+    existing: list[dict[str, Any]] | None = None,
+    discovered_ids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """Translate a discovery-form submission into validated connection dicts."""
+    """Translate a discovery-form submission into validated connection dicts.
+
+    *existing* and *discovered_ids* are used to seed ``seen_neighbors`` with
+    the neighbour VTherm UIDs of connections that will be KEPT after the merge
+    (i.e. existing connections whose aperture is NOT in *discovered_ids*).
+    This prevents a produced room-edge from silently duplicating a kept manual
+    connection to the same neighbour.
+    """
     produced: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
-    seen_neighbors: set[str] = set()
+    _replaced = set(discovered_ids or [])
+    # Pre-seed with neighbours of existing connections that will be KEPT.
+    seen_neighbors: set[str] = {
+        c[CONF_CONN_NEIGHBOR_VTHERM]
+        for c in (existing or [])
+        if c.get(CONF_CONN_NEIGHBOR_VTHERM) and aperture_id_of(c) not in _replaced
+    }
     for ap in discovered:
         endpoint = user_input.get(ap.aperture_entity_id, ENDPOINT_SKIP)
         policy = user_input.get(ap.aperture_entity_id + DISCOVERY_POLICY_SUFFIX, "model")
@@ -829,7 +845,10 @@ class SmartPIOptionsFlow(OptionsFlow):
         nodes = discover_candidate_nodes(self.hass, self_uid)
 
         if user_input is not None:
-            produced, errors = build_discovery_connections(user_input, discovered)
+            discovered_ids = {a.aperture_entity_id for a in discovered}
+            produced, errors = build_discovery_connections(
+                user_input, discovered, existing=existing, discovered_ids=discovered_ids
+            )
             if errors:
                 return self.async_show_form(
                     step_id="discover_connections",
@@ -839,9 +858,8 @@ class SmartPIOptionsFlow(OptionsFlow):
                         "apertures": ", ".join(f"{a.name} ({a.aperture_type})" for a in discovered)
                     },
                 )
-            discovered_ids = [a.aperture_entity_id for a in discovered]
             data[CONF_SMART_PI_CONNECTIONS] = merge_discovered_connections(
-                existing, discovered_ids, produced
+                existing, list(discovered_ids), produced
             )
             return self.async_create_entry(title="", data=data)
 

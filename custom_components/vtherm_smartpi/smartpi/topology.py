@@ -111,16 +111,25 @@ def resolve_effective_area(
 
 
 def build_candidate_nodes(
-    vtherms: list[VThermNode], areas: list[AreaNode], self_uid: str | None
+    vtherms: list[VThermNode],
+    areas: list[AreaNode],
+    self_uid: str | None,
+    self_area_id: str | None = None,
 ) -> CandidateNodes:
-    """Far-endpoint choices: SmartPI VTherms (excl. self) + areas with a temp sensor."""
+    """Far-endpoint choices: SmartPI VTherms (excl. self) + areas with a temp sensor.
+
+    *self_area_id* excludes the current room's own area from ``sensed`` to
+    prevent a nonsensical self-coupling sensor edge.
+    """
     controlled = [
         (f"vt:{vt.unique_id}", vt.label)
         for vt in vtherms
         if vt.is_smartpi and vt.unique_id != self_uid
     ]
     sensed = [
-        (f"area:{a.temp_sensor}", a.label) for a in areas if a.temp_sensor
+        (f"area:{a.temp_sensor}", a.label)
+        for a in areas
+        if a.temp_sensor and a.area_id != self_area_id
     ]
     return CandidateNodes(controlled=controlled, sensed=sensed)
 
@@ -262,4 +271,5 @@ def discover_candidate_nodes(hass, self_uid: str | None) -> CandidateNodes:
                 temp_sensor=getattr(area, "temperature_entity_id", None),
             )
         )
-    return build_candidate_nodes(vtherms, areas, self_uid)
+    self_area_id = resolve_room_area(hass, self_uid) if self_uid else None
+    return build_candidate_nodes(vtherms, areas, self_uid, self_area_id)

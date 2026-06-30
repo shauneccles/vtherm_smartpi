@@ -104,6 +104,36 @@ def test_candidate_nodes_controlled_excludes_self_and_non_smartpi():
     assert nodes.sensed == [("area:sensor.kitchen_sensor_temperature", "Kitchen")]
 
 
+def test_candidate_nodes_sensed_excludes_self_area():
+    """build_candidate_nodes must not offer the current room's own area as a sensed endpoint."""
+    vtherms = [
+        VThermNode("uid-self", "Bedroom heating", True),
+    ]
+    areas = [
+        AreaNode("bedroom", "Bedroom", "sensor.bedroom_temperature"),
+        AreaNode("kitchen", "Kitchen", "sensor.kitchen_temperature"),
+        AreaNode("toilet", "Toilet", None),
+    ]
+    nodes = build_candidate_nodes(vtherms, areas, self_uid="uid-self", self_area_id="bedroom")
+    # bedroom must be excluded since it is the self area
+    assert ("area:sensor.bedroom_temperature", "Bedroom") not in nodes.sensed
+    # kitchen must remain
+    assert ("area:sensor.kitchen_temperature", "Kitchen") in nodes.sensed
+    # toilet (no sensor) must not appear
+    assert len(nodes.sensed) == 1
+
+
+def test_candidate_nodes_self_area_none_keeps_all_areas_with_sensor():
+    """When self_area_id is None (default), no area is excluded from sensed."""
+    vtherms = []
+    areas = [
+        AreaNode("bedroom", "Bedroom", "sensor.bedroom_temperature"),
+        AreaNode("kitchen", "Kitchen", "sensor.kitchen_temperature"),
+    ]
+    nodes = build_candidate_nodes(vtherms, areas, self_uid=None)
+    assert len(nodes.sensed) == 2
+
+
 def test_endpoint_value_for_current():
     assert endpoint_value_for_current(None) == ENDPOINT_SKIP
     assert endpoint_value_for_current({CONF_CONN_TARGET_KIND: CONN_TARGET_OUTSIDE}) == "outside"

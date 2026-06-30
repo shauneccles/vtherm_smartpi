@@ -94,3 +94,61 @@ def test_build_discovery_connections_rejects_duplicate_neighbour():
     assert produced[0][CONF_CONN_APERTURE_SENSOR] == "binary_sensor.win1"
     assert "binary_sensor.win2" in errors
     assert errors["binary_sensor.win2"] == ERROR_CONNECTION_DUPLICATE
+
+
+def test_build_discovery_connections_rejects_duplicate_of_kept_existing():
+    """A produced room-edge must not duplicate a KEPT existing connection's neighbour.
+
+    Existing connection to uid-play via binary_sensor.existing_window will be KEPT
+    because its aperture is not in discovered_ids. A discovery row also targeting
+    uid-play must be rejected with ERROR_CONNECTION_DUPLICATE.
+    """
+    existing = [
+        {
+            CONF_CONN_APERTURE_SENSOR: "binary_sensor.existing_window",
+            CONF_CONN_TARGET_KIND: CONN_TARGET_ROOM,
+            CONF_CONN_NEIGHBOR_VTHERM: "uid-play",
+        }
+    ]
+    discovered_ids = {"binary_sensor.new_door"}
+    discovered = [
+        DiscoveredAperture("binary_sensor.new_door", "New door", "door", None),
+    ]
+    user_input = {
+        "binary_sensor.new_door": "vt:uid-play",
+        "binary_sensor.new_door" + DISCOVERY_POLICY_SUFFIX: "model",
+    }
+    produced, errors = build_discovery_connections(
+        user_input, discovered, existing=existing, discovered_ids=discovered_ids
+    )
+    assert produced == []
+    assert "binary_sensor.new_door" in errors
+    assert errors["binary_sensor.new_door"] == ERROR_CONNECTION_DUPLICATE
+
+
+def test_build_discovery_connections_does_not_seed_replaced_existing():
+    """An existing connection whose aperture IS being rediscovered must NOT seed
+    seen_neighbors — the user is replacing it, so the same neighbour may be re-selected.
+    """
+    existing = [
+        {
+            CONF_CONN_APERTURE_SENSOR: "binary_sensor.door",
+            CONF_CONN_TARGET_KIND: CONN_TARGET_ROOM,
+            CONF_CONN_NEIGHBOR_VTHERM: "uid-play",
+        }
+    ]
+    # binary_sensor.door is in discovered_ids so its existing entry will be replaced
+    discovered_ids = {"binary_sensor.door"}
+    discovered = [
+        DiscoveredAperture("binary_sensor.door", "Door", "door", None),
+    ]
+    user_input = {
+        "binary_sensor.door": "vt:uid-play",
+        "binary_sensor.door" + DISCOVERY_POLICY_SUFFIX: "model",
+    }
+    produced, errors = build_discovery_connections(
+        user_input, discovered, existing=existing, discovered_ids=discovered_ids
+    )
+    assert errors == {}
+    assert len(produced) == 1
+    assert produced[0][CONF_CONN_NEIGHBOR_VTHERM] == "uid-play"
