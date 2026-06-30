@@ -4,6 +4,7 @@ import voluptuous as vol
 
 from custom_components.vtherm_smartpi.config_flow import (
     DISCOVERY_POLICY_SUFFIX,
+    ERROR_CONNECTION_DUPLICATE,
     build_discovery_connections,
     build_discovery_schema,
     endpoint_field_options,
@@ -68,10 +69,28 @@ def test_build_discovery_connections_maps_rows():
         "binary_sensor.skip_me": ENDPOINT_SKIP,
         "binary_sensor.skip_me" + DISCOVERY_POLICY_SUFFIX: "model",
     }
-    produced, errors = build_discovery_connections(user_input, discovered, _nodes())
+    produced, errors = build_discovery_connections(user_input, discovered)
     assert errors == {}
     by_ap = {c[CONF_CONN_APERTURE_SENSOR]: c for c in produced}
     assert set(by_ap) == {"binary_sensor.win", "binary_sensor.door"}
     assert by_ap["binary_sensor.win"][CONF_CONN_TARGET_KIND] == CONN_TARGET_OUTSIDE
     assert by_ap["binary_sensor.door"][CONF_CONN_TARGET_KIND] == CONN_TARGET_ROOM
     assert by_ap["binary_sensor.door"][CONF_CONN_NEIGHBOR_VTHERM] == "uid-play"
+
+
+def test_build_discovery_connections_rejects_duplicate_neighbour():
+    discovered = [
+        DiscoveredAperture("binary_sensor.win1", "Window 1", "window", None),
+        DiscoveredAperture("binary_sensor.win2", "Window 2", "window", None),
+    ]
+    user_input = {
+        "binary_sensor.win1": "vt:uid-play",
+        "binary_sensor.win1" + DISCOVERY_POLICY_SUFFIX: "model",
+        "binary_sensor.win2": "vt:uid-play",
+        "binary_sensor.win2" + DISCOVERY_POLICY_SUFFIX: "model",
+    }
+    produced, errors = build_discovery_connections(user_input, discovered)
+    assert len(produced) == 1
+    assert produced[0][CONF_CONN_APERTURE_SENSOR] == "binary_sensor.win1"
+    assert "binary_sensor.win2" in errors
+    assert errors["binary_sensor.win2"] == ERROR_CONNECTION_DUPLICATE

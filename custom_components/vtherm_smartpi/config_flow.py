@@ -355,11 +355,11 @@ def build_discovery_schema(
 def build_discovery_connections(
     user_input: dict[str, Any],
     discovered: list[DiscoveredAperture],
-    nodes: CandidateNodes,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Translate a discovery-form submission into validated connection dicts."""
     produced: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
+    seen_neighbors: set[str] = set()
     for ap in discovered:
         endpoint = user_input.get(ap.aperture_entity_id, ENDPOINT_SKIP)
         policy = user_input.get(ap.aperture_entity_id + DISCOVERY_POLICY_SUFFIX, "model")
@@ -372,6 +372,12 @@ def build_discovery_connections(
         if err:
             errors[ap.aperture_entity_id] = err
             continue
+        neighbor = conn.get(CONF_CONN_NEIGHBOR_VTHERM)
+        if neighbor is not None:
+            if neighbor in seen_neighbors:
+                errors[ap.aperture_entity_id] = ERROR_CONNECTION_DUPLICATE
+                continue
+            seen_neighbors.add(neighbor)
         produced.append(conn)
     return produced, errors
 
@@ -823,12 +829,15 @@ class SmartPIOptionsFlow(OptionsFlow):
         nodes = discover_candidate_nodes(self.hass, self_uid)
 
         if user_input is not None:
-            produced, errors = build_discovery_connections(user_input, discovered, nodes)
+            produced, errors = build_discovery_connections(user_input, discovered)
             if errors:
                 return self.async_show_form(
                     step_id="discover_connections",
                     data_schema=build_discovery_schema(discovered, nodes),
                     errors=errors,
+                    description_placeholders={
+                        "apertures": ", ".join(f"{a.name} ({a.aperture_type})" for a in discovered)
+                    },
                 )
             discovered_ids = [a.aperture_entity_id for a in discovered]
             data[CONF_SMART_PI_CONNECTIONS] = merge_discovered_connections(
