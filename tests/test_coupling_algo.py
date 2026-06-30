@@ -203,6 +203,33 @@ def test_outside_window_raises_b_eff_keeps_reference():
     assert abs(text_eff - 7.0) < 0.2   # outside edge does not move the reference
 
 
+def test_non_finite_neighbor_temp_does_not_poison_b_eff():
+    """A neighbour that publishes a non-finite t_int must be skipped in the fold
+    so b_eff/text_eff stay finite (defence-in-depth alongside _read_temp)."""
+    import math
+    algo = make_smartpi()
+    nan_edge = ResolvedEdge(edge_id="N", target_kind="room", aperture_type="door",
+                            open_policy="model", neighbor_temp=float("nan"),
+                            neighbor_power_w=None, neighbor_uid="N")
+
+    class _View:
+        uid = "A"
+        def publish(self, snap): pass
+        def any_open(self): return True
+        def open_edges(self): return [nan_edge]
+        def component_power_w(self): return 0.0
+
+    algo.attach_coupling_view(_View())
+    algo.est.b = 0.008
+    algo.coupling_est._rls.ensure_edge("N")
+    algo.coupling_est._rls.set_value("N", 0.05)
+    for _ in range(5):
+        b_eff, text_eff = algo._refresh_coupling_context(22.0, 7.0)
+    assert math.isfinite(b_eff)
+    assert b_eff == 0.008  # NaN neighbour contributed nothing -> identity
+    assert text_eff == 7.0
+
+
 def test_closed_is_identity():
     algo = make_smartpi()
 

@@ -2874,7 +2874,10 @@ class SmartPI:
         if view is not None and current_temp is not None:
             for edge in view.open_edges():
                 t_j = ext_temp if edge.target_kind == TARGET_OUTSIDE else edge.neighbor_temp
-                if t_j is None:
+                if t_j is None or not isfinite(t_j):
+                    # Fail safe: a non-finite neighbour/ext temperature (e.g. a
+                    # room that published a NaN t_int) must not be multiplied
+                    # into the slewed coupling sums and poison b_eff/text_eff.
                     continue
                 open_neighbors.append(edge.edge_id)
                 k = self.coupling_est.k(edge.edge_id, current_temp, t_j, edge.target_kind)
