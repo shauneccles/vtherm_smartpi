@@ -13,14 +13,13 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from datetime import timedelta
 
 from .algo import SmartPI
-from .cycle_utils import calculate_cycle_times
 from .smartpi.const import (
     SMARTPI_RECALC_INTERVAL_SEC,
     SmartPIPhase,
     SmartPICalibrationPhase,
     SmartPICalibrationResult,
-    NEAR_BAND_HYSTERESIS_C,
 )
+from .smartpi.room_coupling import build_edge_configs, get_coordinator
 from .const import (
     CONF_TARGET_VTHERM,
     CONF_MINIMAL_ACTIVATION_DELAY,
@@ -39,6 +38,8 @@ from .const import (
     CONF_SMART_PI_KNEE_DEMAND,
     CONF_SMART_PI_KNEE_VALVE,
     CONF_SMART_PI_MAX_VALVE,
+    CONF_SMART_PI_POWER_SENSOR,
+    CONF_SMART_PI_CONNECTIONS,
     DEFAULT_OPTIONS,
     DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX,
     DOMAIN,
@@ -85,6 +86,9 @@ class SmartPIHandler:
         self._valve_linearization_configured: bool = False
         self._valve_curve_params: ValveCurveParams | None = None
         self._applied_config_entry_id: str | None = None
+        # Room coupling
+        self._power_sensor_entity_id: str | None = None
+        self._coupling_edge_ids: set[str] = set()
 
     def init_algorithm(self):
         """Initialize SmartPI algorithm."""
@@ -195,6 +199,14 @@ class SmartPIHandler:
             valve_mode=valve_mode_enabled,
         )
 
+        # --- Room coupling: power sensor + connection topology ---
+        self._power_sensor_entity_id = entry.get(CONF_SMART_PI_POWER_SENSOR) or None
+        edges, edge_ids = build_edge_configs(entry.get(CONF_SMART_PI_CONNECTIONS, []))
+        self._coupling_edge_ids = edge_ids
+        coordinator = get_coordinator(t.hass, t.hass.data.setdefault(DOMAIN, {}))
+        view = coordinator.register_room(t.unique_id, edges)
+        t.prop_algorithm.attach_coupling_view(view)
+
         _LOGGER.info("%s - SmartPI Algorithm initialized", t)
         async_dispatcher_send(t.hass, SIGNAL_SMARTPI_TARGET_UPDATED, t.unique_id)
 
@@ -264,6 +276,26 @@ class SmartPIHandler:
                     _LOGGER.debug("%s - SmartPI state loaded", t)
             except Exception as e:
                 _LOGGER.error("%s - Failed to load SmartPI state: %s", t, e)
+        # Prune persisted coupling edges, but startup prune intentionally
+        # PRESERVES every persisted coefficient: the keep-set unions this room's
+        # own declarations, edges the coordinator knows from the neighbour's side,
+        # AND the edges already present in the just-loaded estimator state. The
+        # last term makes the prune order-independent — a one-sided room link is
+        # declared only by the neighbour, so if that neighbour has not registered
+        # its edge yet, pruning against the live (partial) topology alone would
+        # permanently drop this passive room's learned coefficient. Removal of
+        # truly-dead edges is therefore NOT done from partial startup topology.
+        if t.prop_algorithm and isinstance(t.prop_algorithm, SmartPI):
+            keep_edge_ids = set(self._coupling_edge_ids)
+            keep_edge_ids |= t.prop_algorithm.coupling_est.edge_ids()
+            try:
+                coordinator = get_coordinator(
+                    t.hass, t.hass.data.setdefault(DOMAIN, {})
+                )
+                keep_edge_ids |= coordinator.edge_ids_for(t.unique_id)
+            except Exception:  # pragma: no cover - defensive: never block startup
+                pass
+            t.prop_algorithm.coupling_est.prune(keep_edge_ids)
         self._bind_config_entry_to_device()
 
     async def async_startup(self):
@@ -293,6 +325,11 @@ class SmartPIHandler:
         """Cleanup and save state on removal."""
         t = self._thermostat
         self._unbind_config_entry_from_device()
+        try:
+            coordinator = get_coordinator(t.hass, t.hass.data.setdefault(DOMAIN, {}))
+            coordinator.unregister_room(t.unique_id)
+        except Exception:  # pragma: no cover - defensive cleanup
+            pass
         if self._store and t.prop_algorithm:
             # We can't await here easily, but we schedule save
             t.hass.async_create_task(self._async_save())
@@ -334,7 +371,6 @@ class SmartPIHandler:
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""
         t = self._thermostat
-        from datetime import datetime
         from .smartpi.guards import GuardAction
 
         algo = t.prop_algorithm if isinstance(t.prop_algorithm, SmartPI) else None
@@ -389,6 +425,17 @@ class SmartPIHandler:
             if guard_kick_action == GuardAction.KICK_TRIGGER:
                 algo._last_restart_reason = "guard_kick"
                 force = True
+
+            # Read this room's measured heating power (watts) for coupling aggregation.
+            if self._power_sensor_entity_id and isinstance(algo, SmartPI):
+                power_state = t.hass.states.get(self._power_sensor_entity_id)
+                power_w = None
+                if power_state is not None:
+                    try:
+                        power_w = float(power_state.state)
+                    except (TypeError, ValueError):
+                        power_w = None
+                algo.set_measured_power(power_w)
 
             # Calculate uses current temp, ext temp, etc.
             # If guard_cut is active, calculate() will set on_percent=0.

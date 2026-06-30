@@ -1,0 +1,441 @@
+"""Algo-level integration tests for room coupling.
+
+Exercises the coupling wiring inside SmartPI without driving a full control
+cycle: effective-parameter folding, the diagnostics block, snapshot publishing,
+and persistence (including the no-coupling regression to identity).
+"""
+
+import time
+from unittest.mock import MagicMock
+
+from custom_components.vtherm_smartpi.algo import SmartPI
+from custom_components.vtherm_smartpi.smartpi.room_coupling import ResolvedEdge, OpenAperture
+from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT
+
+
+def make_smartpi(**kwargs):
+    defaults = dict(
+        hass=MagicMock(),
+        cycle_min=10,
+        minimal_activation_delay=0,
+        minimal_deactivation_delay=0,
+        name="TestCoupling",
+        debug_mode=True,
+    )
+    defaults.update(kwargs)
+    return SmartPI(**defaults)
+
+
+class _FakeView:
+    """Minimal RoomView stand-in for one open neighbour 'N'."""
+
+    def __init__(self, *, open_=True, neighbor_temp=24.0, power=250.0):
+        self._open = open_
+        self._neighbor_temp = neighbor_temp
+        self._power = power
+        self.published = []
+
+    def any_open(self):
+        return self._open
+
+    def open_edges(self):
+        if not self._open:
+            return []
+        return [
+            ResolvedEdge(
+                edge_id="N",
+                target_kind="room",
+                aperture_type="door",
+                open_policy="model",
+                neighbor_temp=self._neighbor_temp,
+                neighbor_power_w=self._power,
+                neighbor_uid="N",
+            )
+        ]
+
+    def component_power_w(self):
+        return self._power
+
+    def publish(self, snapshot):
+        self.published.append(snapshot)
+
+
+def _load_k(algo, neighbor="N", k=0.01):
+    algo.coupling_est.load_state(
+        {"edges": {neighbor: {"k": k, "reliable": True, "n_ok": 10, "hist": [k] * 10}}}
+    )
+
+
+def test_fresh_instance_has_coupling_components():
+    algo = make_smartpi()
+    assert algo.coupling_est is not None
+    assert algo._coupling_view is None
+    assert algo._last_coupling_diag == {}
+
+
+def test_refresh_context_identity_without_view():
+    algo = make_smartpi()
+    b_eff, text_eff = algo._refresh_coupling_context(21.0, 5.0)
+    assert b_eff == algo.est.b
+    assert text_eff == 5.0
+    assert algo._coupling_any_open() is False
+
+
+
+def test_set_measured_power_and_snapshot_publish():
+    algo = make_smartpi()
+    view = _FakeView()
+    algo.attach_coupling_view(view)
+    algo.set_measured_power(1234.0)
+    algo._publish_coupling_snapshot(21.0, 5.0)
+    assert view.published[-1]["power_w"] == 1234.0
+    assert view.published[-1]["t_int"] == 21.0
+    assert view.published[-1]["available"] is True
+
+    algo.set_measured_power(None)
+    algo._publish_coupling_snapshot(None, 5.0)
+    assert view.published[-1]["power_w"] is None
+    assert view.published[-1]["available"] is False
+
+
+def test_save_state_includes_coupling():
+    algo = make_smartpi()
+    _load_k(algo, k=0.013)
+    state = algo.save_state()
+    assert "coupling_state" in state
+    assert "rls" in state["coupling_state"]
+    assert "N" in state["coupling_state"]["rls"]["edges"]
+
+
+def test_persistence_round_trip():
+    algo = make_smartpi()
+    _load_k(algo, k=0.013)
+    state = algo.save_state()
+    restored = make_smartpi()
+    restored.load_state(state)
+    assert abs(restored.coupling_est.coeff("N") - 0.013) < 1e-9
+
+
+def test_no_edges_save_state_regression():
+    """An instance with no coupling persists an empty edge map (identity)."""
+    algo = make_smartpi()
+    state = algo.save_state()
+    assert state["coupling_state"]["rls"]["edges"] == {}
+    assert state["coupling_state"]["kind"] == {}
+
+
+def test_learning_accepts_multiple_open_edges():
+    algo = make_smartpi()
+    e1 = ResolvedEdge(edge_id="B", target_kind="room", aperture_type="door",
+                      open_policy="model", neighbor_temp=24.0, neighbor_power_w=None,
+                      neighbor_uid="B")
+    e2 = ResolvedEdge(edge_id="C", target_kind="room", aperture_type="door",
+                      open_policy="model", neighbor_temp=18.0, neighbor_power_w=None,
+                      neighbor_uid="C")
+
+    class _View:
+        uid = "A"
+        def publish(self, snap): pass
+        def any_open(self): return True
+        def open_edges(self): return [e1, e2]
+        def component_power_w(self): return 0.0
+
+    algo.attach_coupling_view(_View())
+    # Make the base model "reliable enough" for learning to proceed.
+    algo.est.a = 0.01
+    algo.est.b = 0.008
+    # Prime + drive a few cycles (allow_learn is gated internally on base reliability;
+    # force the gate open by monkeypatching the precondition).
+    algo._coupling_learn_allowed = lambda *a, **k: True  # see Step 3
+    for i in range(20):
+        algo._update_coupling_learning(1.0, 20.0 + 0.05 * i, 5.0, VThermHvacMode_HEAT)
+    assert algo.coupling_est._rls.samples("B") > 0
+    assert algo.coupling_est._rls.samples("C") > 0
+
+
+def test_snapshot_includes_room_edge_k_map():
+    algo = make_smartpi()
+    captured = {}
+
+    class _View:
+        uid = "A"
+        def publish(self, snap): captured.update(snap)
+        def any_open(self): return False
+        def open_edges(self): return []
+        def component_power_w(self): return 0.0
+
+    algo.attach_coupling_view(_View())
+    algo.coupling_est._rls.ensure_edge("B")
+    algo.coupling_est._rls.set_value("B", 0.07)
+    algo.coupling_est._kind["B"] = "room"
+    algo._publish_coupling_snapshot(20.0, 5.0)
+    assert "coupling_k_by_neighbor" in captured
+    assert abs(captured["coupling_k_by_neighbor"]["B"]["k"] - 0.07) < 1e-9
+
+
+def _outside_view(edge_id="win"):
+    e = ResolvedEdge(edge_id=edge_id, target_kind="outside", aperture_type="window",
+                     open_policy="model", neighbor_temp=None, neighbor_power_w=None)
+
+    class _View:
+        uid = "A"
+        def publish(self, snap): pass
+        def any_open(self): return True
+        def open_edges(self): return [e]
+        def component_power_w(self): return 0.0
+    return _View()
+
+
+def test_outside_window_raises_b_eff_keeps_reference():
+    algo = make_smartpi()
+    algo.attach_coupling_view(_outside_view())
+    algo.est.b = 0.008
+    algo.coupling_est._rls.ensure_edge("win")
+    algo.coupling_est._rls.set_value("win", 0.02)   # κ
+    algo.coupling_est._kind["win"] = "outside"
+    # Converge the EMA slew.
+    for _ in range(60):
+        b_eff, text_eff = algo._refresh_coupling_context(22.0, 7.0)
+    import math
+    k_inst = 0.02 * math.sqrt(15.0)
+    assert b_eff > 0.008
+    assert abs(b_eff - (0.008 + k_inst)) < 5e-3
+    assert abs(text_eff - 7.0) < 0.2   # outside edge does not move the reference
+
+
+def test_non_finite_neighbor_temp_does_not_poison_b_eff():
+    """A neighbour that publishes a non-finite t_int must be skipped in the fold
+    so b_eff/text_eff stay finite (defence-in-depth alongside _read_temp)."""
+    import math
+    algo = make_smartpi()
+    nan_edge = ResolvedEdge(edge_id="N", target_kind="room", aperture_type="door",
+                            open_policy="model", neighbor_temp=float("nan"),
+                            neighbor_power_w=None, neighbor_uid="N")
+
+    class _View:
+        uid = "A"
+        def publish(self, snap): pass
+        def any_open(self): return True
+        def open_edges(self): return [nan_edge]
+        def component_power_w(self): return 0.0
+
+    algo.attach_coupling_view(_View())
+    algo.est.b = 0.008
+    algo.coupling_est._rls.ensure_edge("N")
+    algo.coupling_est._rls.set_value("N", 0.05)
+    for _ in range(5):
+        b_eff, text_eff = algo._refresh_coupling_context(22.0, 7.0)
+    assert math.isfinite(b_eff)
+    assert b_eff == 0.008  # NaN neighbour contributed nothing -> identity
+    assert text_eff == 7.0
+
+
+def test_closed_is_identity():
+    algo = make_smartpi()
+
+    class _Empty:
+        uid = "A"
+        def publish(self, snap): pass
+        def any_open(self): return False
+        def open_edges(self): return []
+        def component_power_w(self): return 0.0
+
+    algo.attach_coupling_view(_Empty())
+    algo.est.b = 0.008
+    b_eff, text_eff = algo._refresh_coupling_context(22.0, 7.0)
+    assert b_eff == 0.008
+    assert text_eff == 7.0
+
+
+def test_trip_off_aperture_forces_off():
+    algo = make_smartpi()
+
+    class _View:
+        uid = "A"
+        def publish(self, snap): pass
+        def any_open(self): return True
+        # trip-off must fire from the physically-open aperture even when the edge
+        # is NOT resolvable for the fold (e.g. neighbour temp unavailable).
+        def open_edges(self): return []
+        def open_apertures(self):
+            return [OpenAperture("patio", "outside", "door", "trip_off")]
+        def component_power_w(self): return 0.0
+
+    algo.attach_coupling_view(_View())
+    assert algo._coupling_trip_off_active() is True
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert algo.linear_on_percent == 0.0
+
+
+def test_model_aperture_does_not_trip_off():
+    """A MODEL-policy aperture must NOT trigger the trip-off path."""
+    algo = make_smartpi()
+    e = ResolvedEdge(edge_id="win", target_kind="outside", aperture_type="window",
+                     open_policy="model", neighbor_temp=None, neighbor_power_w=None)
+
+    class _View:
+        uid = "A"
+        def publish(self, snap): pass
+        def any_open(self): return True
+        def open_edges(self): return [e]
+        def open_apertures(self):
+            return [OpenAperture("win", "outside", "window", "model")]
+        def component_power_w(self): return 0.0
+
+    algo.attach_coupling_view(_View())
+    assert algo._coupling_trip_off_active() is False
+
+
+class _GateView:
+    """View whose physical-open state can be toggled; resolvable for nothing."""
+
+    uid = "A"
+
+    def __init__(self, open_):
+        self._open = open_
+
+    def any_open(self):
+        return self._open
+
+    def open_edges(self):
+        return []
+
+    def open_apertures(self):
+        # MODEL policy so trip-off does not fire; we are exercising the
+        # base-learning freeze/reset gate, not the trip-off path.
+        return [OpenAperture("N", "room", "door", "model")] if self._open else []
+
+    def component_power_w(self):
+        return 0.0
+
+    def publish(self, snap):
+        pass
+
+
+def test_open_aperture_resets_active_learning_window(monkeypatch):
+    """When an aperture is open and a base-learning window is in progress, the
+    coupled-open gate must abandon that window so a post-close sample is never
+    differenced against a pre-open sample across the coupled period."""
+    algo = make_smartpi()
+    algo.attach_coupling_view(_GateView(open_=True))
+    learn_calls = []
+    monkeypatch.setattr(algo, "update_learning", lambda **k: learn_calls.append(True))
+    # Prime the timer so dt_min > 0 (skip the first-run reboot freeze).
+    algo._last_calculate_time = time.monotonic() - 60.0
+    # Simulate an in-progress base-learning window started before the door opened.
+    algo.learn_win._active = True
+    algo.learn_win._start_ts = time.monotonic() - 600.0
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == []                 # base learning frozen while open
+    assert algo.learn_win.active is False     # contaminated window abandoned
+    assert algo.learn_win.start_ts is None
+
+
+def test_open_aperture_without_active_window_does_not_call_reset(monkeypatch):
+    """No active window -> nothing to abandon; the gate must not spuriously reset."""
+    algo = make_smartpi()
+    algo.attach_coupling_view(_GateView(open_=True))
+    monkeypatch.setattr(algo, "update_learning", lambda **k: None)
+    reset_calls = []
+    monkeypatch.setattr(algo.learn_win, "reset", lambda: reset_calls.append(True))
+    algo._last_calculate_time = time.monotonic() - 60.0
+    algo.learn_win._active = False
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert reset_calls == []
+
+
+def test_closed_aperture_runs_learning_and_keeps_window(monkeypatch):
+    """Regression-critical: with no aperture open, behaviour is unchanged — the
+    base learning update runs and the coupling gate does not reset the window."""
+    algo = make_smartpi()
+    algo.attach_coupling_view(_GateView(open_=False))
+    learn_calls = []
+    monkeypatch.setattr(algo, "update_learning", lambda **k: learn_calls.append(True))
+    reset_calls = []
+    monkeypatch.setattr(algo.learn_win, "reset", lambda: reset_calls.append(True))
+    algo._last_calculate_time = time.monotonic() - 60.0
+    algo.learn_win._active = True
+    algo.learn_win._start_ts = time.monotonic() - 600.0
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == [True]   # base learning ran (door closed)
+    assert reset_calls == []        # coupling gate did not touch the window
+
+
+def _prime_tick(algo):
+    """Prime the timer so the next calculate() sees dt_min > 0 (skip reboot freeze)."""
+    algo._last_calculate_time = time.monotonic() - 60.0
+
+
+def test_first_closed_interval_after_open_defers_learning(monkeypatch):
+    """Open->close across ticks must NOT learn the first closed interval.
+
+    When a door closes between recalculation ticks, that first 'closed' interval
+    still straddles the coupled period (its dt_min is timed from the previous,
+    coupled tick). Base learning must stay frozen for exactly one interval so the
+    next fresh window backdates only into already-closed (clean) time, never
+    producing a base sample spanning the open period.
+    """
+    algo = make_smartpi()
+    view = _GateView(open_=True)
+    algo.attach_coupling_view(view)
+    learn_calls = []
+    monkeypatch.setattr(algo, "update_learning", lambda **k: learn_calls.append(True))
+
+    # Tick 1: door OPEN -> learning frozen, _coupling_was_open latches True.
+    _prime_tick(algo)
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == []
+    assert algo._coupling_was_open is True
+
+    # Tick 2: door now CLOSED, but this first closed interval still straddles the
+    # coupled period -> learning still deferred (no sample over the open period).
+    view._open = False
+    _prime_tick(algo)
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == []
+    assert algo._coupling_was_open is False
+
+    # Tick 3: still closed -> learning resumes into clean (already-closed) time.
+    _prime_tick(algo)
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == [True]
+
+
+def test_no_aperture_sequence_learns_every_interval(monkeypatch):
+    """Regression: with no aperture ever open, _coupling_was_open stays False and
+    every interval learns (byte-identical to behaviour before the deferral fix)."""
+    algo = make_smartpi()
+    algo.attach_coupling_view(_GateView(open_=False))
+    learn_calls = []
+    monkeypatch.setattr(algo, "update_learning", lambda **k: learn_calls.append(True))
+    for _ in range(3):
+        _prime_tick(algo)
+        algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                       hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == [True, True, True]
+    assert algo._coupling_was_open is False
+
+
+def test_reset_learning_clears_coupling():
+    """A user 'reset learning' must wipe learned coupling + fold state."""
+    algo = make_smartpi()
+    algo.coupling_est._rls.ensure_edge("B")
+    algo.coupling_est._rls.set_value("B", 0.07)
+    algo.coupling_est._kind["B"] = "room"
+    algo._cpl_sk_eff = 0.05
+    algo._cpl_skt_eff = 1.0
+    algo._coupling_b_eff = 0.06
+    algo._coupling_text_eff = 9.0
+    algo._last_coupling_diag = {"any_door_open": True}
+    algo.reset_learning()
+    assert algo.coupling_est.coeff("B") == 0.0
+    assert algo._cpl_sk_eff == 0.0 and algo._cpl_skt_eff == 0.0
+    assert algo._coupling_b_eff is None and algo._coupling_text_eff is None
+    assert algo._last_coupling_diag == {}

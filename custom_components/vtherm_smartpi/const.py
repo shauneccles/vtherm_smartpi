@@ -26,6 +26,34 @@ CONF_SMART_PI_KNEE_DEMAND = "smart_pi_knee_demand"
 CONF_SMART_PI_KNEE_VALVE = "smart_pi_knee_valve"
 CONF_SMART_PI_MAX_VALVE = "smart_pi_max_valve"
 
+# --- Room connections / coupled thermal modelling ---
+# Optional real power sensor (watts) for this room, aggregated across the
+# connected component by the RoomCouplingCoordinator.
+CONF_SMART_PI_POWER_SENSOR = "smart_pi_power_sensor"
+# List of inter-room connections declared on this room. Each item is a dict
+# of {CONF_CONN_NEIGHBOR_VTHERM, CONF_CONN_DOOR_SENSOR}.
+CONF_SMART_PI_CONNECTIONS = "smart_pi_connections"
+# Keys inside a single connection dict.
+CONF_CONN_NEIGHBOR_VTHERM = "neighbor_vtherm_entity"
+CONF_CONN_DOOR_SENSOR = "connection_door_sensor"
+
+# New per-aperture connection keys (superset of the legacy two keys above).
+CONF_CONN_TARGET_KIND = "target_kind"            # room | sensor | outside
+CONF_CONN_NEIGHBOR_TEMP_SENSOR = "neighbor_temp_sensor"  # when target_kind == sensor
+CONF_CONN_APERTURE_SENSOR = "aperture_sensor"    # binary open/closed; supersedes door_sensor
+CONF_CONN_APERTURE_TYPE = "aperture_type"        # door | window
+CONF_CONN_OPEN_POLICY = "open_policy"            # model | trip_off
+
+# Node kinds and aperture policies (string values are stored verbatim in config
+# and used directly as EdgeConfig.target_kind / open_policy).
+CONN_TARGET_ROOM = "room"
+CONN_TARGET_SENSOR = "sensor"
+CONN_TARGET_OUTSIDE = "outside"
+CONN_APERTURE_DOOR = "door"
+CONN_APERTURE_WINDOW = "window"
+CONN_POLICY_MODEL = "model"
+CONN_POLICY_TRIP_OFF = "trip_off"
+
 DEFAULT_MINIMAL_ACTIVATION_DELAY = 0
 DEFAULT_MINIMAL_DEACTIVATION_DELAY = 0
 DEFAULT_SMART_PI_DEADBAND = 0.05
@@ -60,6 +88,7 @@ DEFAULT_OPTIONS: dict[str, float | bool | int] = {
     CONF_SMART_PI_KNEE_DEMAND: DEFAULT_KNEE_DEMAND,
     CONF_SMART_PI_KNEE_VALVE: DEFAULT_KNEE_VALVE,
     CONF_SMART_PI_MAX_VALVE: DEFAULT_MAX_VALVE,
+    CONF_SMART_PI_CONNECTIONS: [],
 }
 
 HVAC_OFF_REASON_WINDOW_DETECTION = "hvac_off_window_detection"

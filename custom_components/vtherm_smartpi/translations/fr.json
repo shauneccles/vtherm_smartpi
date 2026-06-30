@@ -50,10 +50,29 @@
           "smart_pi_knee_valve": "Ouverture de vanne au coude",
           "smart_pi_max_valve": "Ouverture maximale de vanne"
         }
+      },
+      "connections": {
+        "title": "Connexions entre pièces",
+        "description": "Optionnel. Indiquez le capteur de puissance de cette pièce et déclarez des ouvertures (portes ou fenêtres) la reliant à une autre pièce SmartPI, à un capteur de température, ou à l'extérieur. Choisissez le type de connexion, son capteur d'ouverture, le type d'ouverture, et s'il faut modéliser la perte ou couper le chauffage à l'ouverture. Cochez « Ajouter une autre connexion » pour en déclarer plusieurs. Déclarer une connexion d'un seul côté suffit — les liaisons entre pièces deviennent bidirectionnelles automatiquement.",
+        "data": {
+          "smart_pi_power_sensor": "Capteur de puissance (watts)",
+          "neighbor_vtherm_entity": "Pièce connectée (thermostat)",
+          "connection_door_sensor": "Capteur de porte / ouverture",
+          "target_kind": "Type de connexion (pièce / capteur / extérieur)",
+          "neighbor_temp_sensor": "Capteur de température voisin",
+          "aperture_sensor": "Capteur d'ouverture (porte ou fenêtre)",
+          "aperture_type": "Type d'ouverture (porte / fenêtre)",
+          "open_policy": "À l'ouverture : modéliser la perte ou couper",
+          "add_another_connection": "Ajouter une autre connexion"
+        }
       }
     },
     "error": {
-      "invalid_valve_curve": "La courbe de vanne doit respecter ouverture minimale < ouverture au coude < ouverture maximale."
+      "invalid_valve_curve": "La courbe de vanne doit respecter ouverture minimale < ouverture au coude < ouverture maximale.",
+      "connection_incomplete": "Chaque connexion nécessite un capteur d'ouverture et sa cible : une pièce SmartPI connectée, un capteur de température voisin, ou rien de plus pour une fenêtre sur l'extérieur.",
+      "connection_self": "Une pièce ne peut pas être connectée à elle-même.",
+      "connection_duplicate": "Cette pièce est déjà déclarée comme connexion.",
+      "connection_not_smartpi": "La pièce connectée doit être un thermostat utilisant l'algorithme SmartPI."
     },
     "abort": {
       "single_instance_allowed": "Une seule configuration du plugin SmartPI est autorisée."
@@ -86,10 +105,46 @@
           "smart_pi_knee_valve": "Ouverture de vanne au coude",
           "smart_pi_max_valve": "Ouverture maximale de vanne"
         }
+      },
+      "connections": {
+        "title": "Connexions entre pièces",
+        "description": "Optionnel. Indiquez le capteur de puissance de cette pièce et déclarez des ouvertures (portes ou fenêtres) la reliant à une autre pièce SmartPI, à un capteur de température, ou à l'extérieur. Choisissez le type de connexion, son capteur d'ouverture, le type d'ouverture, et s'il faut modéliser la perte ou couper le chauffage à l'ouverture. Cochez « Ajouter une autre connexion » pour en déclarer plusieurs. Les connexions existantes sont conservées ; déclarer une connexion d'un côté rend les liaisons entre pièces bidirectionnelles.",
+        "data": {
+          "smart_pi_power_sensor": "Capteur de puissance (watts)",
+          "neighbor_vtherm_entity": "Pièce connectée (thermostat)",
+          "connection_door_sensor": "Capteur de porte / ouverture",
+          "target_kind": "Type de connexion (pièce / capteur / extérieur)",
+          "neighbor_temp_sensor": "Capteur de température voisin",
+          "aperture_sensor": "Capteur d'ouverture (porte ou fenêtre)",
+          "aperture_type": "Type d'ouverture (porte / fenêtre)",
+          "open_policy": "À l'ouverture : modéliser la perte ou couper",
+          "add_another_connection": "Ajouter une autre connexion"
+        }
+      },
+      "connections_menu": {
+        "title": "Connexions de la pièce",
+        "menu_options": {
+          "discover_connections": "Découvrir les connexions",
+          "connections": "Modifier manuellement les connexions",
+          "finish_connections": "Terminer — conserver les connexions actuelles"
+        }
+      },
+      "discover_connections": {
+        "title": "Découvrir les connexions",
+        "description": "Définissez l'extrémité distante pour chaque porte/fenêtre trouvée dans cette pièce : {apertures}. Laissez « Ignorer » pour ne pas inclure une ouverture.",
+        "data": {}
       }
     },
     "error": {
-      "invalid_valve_curve": "La courbe de vanne doit respecter ouverture minimale < ouverture au coude < ouverture maximale."
+      "invalid_valve_curve": "La courbe de vanne doit respecter ouverture minimale < ouverture au coude < ouverture maximale.",
+      "connection_incomplete": "Chaque connexion nécessite un capteur d'ouverture et sa cible : une pièce SmartPI connectée, un capteur de température voisin, ou rien de plus pour une fenêtre sur l'extérieur.",
+      "connection_self": "Une pièce ne peut pas être connectée à elle-même.",
+      "connection_duplicate": "Cette pièce est déjà déclarée comme connexion.",
+      "connection_not_smartpi": "La pièce connectée doit être un thermostat utilisant l'algorithme SmartPI."
+    },
+    "abort": {
+      "vtherm_no_area": "Affectez ce thermostat à une pièce dans Home Assistant, puis relancez la découverte.",
+      "no_apertures_found": "Aucun capteur de porte/fenêtre n'a été trouvé dans la pièce associée à ce thermostat. Utilisez « Modifier manuellement les connexions » pour en ajouter un."
     }
   }
 }

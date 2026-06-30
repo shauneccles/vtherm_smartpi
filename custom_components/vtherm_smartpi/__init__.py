@@ -30,6 +30,7 @@ from .smartpi.device_link import (
     target_uses_smartpi,
     unbind_config_entry_from_target_device,
 )
+from .smartpi.room_coupling import COORDINATOR_DATA_KEY, get_coordinator
 
 VT_DOMAIN = "versatile_thermostat"
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -248,6 +249,8 @@ async def _reload_smartpi_vtherms_using_defaults(hass: HomeAssistant) -> None:
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up vtherm_smartpi from YAML."""
     del config
+    # Ensure the room-coupling coordinator exists before any handler registers.
+    get_coordinator(hass, _ensure_domain_data(hass))
     _register_factory(hass)
     _register_services(hass)
     return True
@@ -299,7 +302,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = _ensure_domain_data(hass)
     data.pop(entry.entry_id, None)
 
-    if not [key for key in data if key not in (DATA_FACTORY_REGISTERED, DATA_SERVICES_REGISTERED)]:
+    if not [
+        key
+        for key in data
+        if key not in (DATA_FACTORY_REGISTERED, DATA_SERVICES_REGISTERED, COORDINATOR_DATA_KEY)
+    ]:
+        # Last SmartPI entry gone: drop the shared coupling coordinator too, then
+        # unregister the VT factory/services. The coordinator key must be ignored
+        # by this "last entry" test or the cleanup below would never run.
+        data.pop(COORDINATOR_DATA_KEY, None)
         _unregister_factory(hass)
         _unregister_services(hass)
 
