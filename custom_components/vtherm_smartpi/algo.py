@@ -2483,6 +2483,16 @@ class SmartPI:
                 hvac_mode=hvac_mode,
                 target_temp=target_temp,
             )
+        elif self._coupling_any_open() and self.learn_win.active:
+            # An aperture is open and a base-learning window is in progress:
+            # abandon it so a post-close sample is never differenced against a
+            # pre-open sample across the coupled period (the window's stale
+            # _start_ts would otherwise straddle the open interval, where
+            # dt_est.tin_history holds thermally coupled samples). Mirrors the
+            # disqualifying-event reset the LearningWindowManager applies on a
+            # setpoint change. Idempotent: once reset, active is False so later
+            # open ticks no-op; closed ticks are unaffected (regression-safe).
+            self.learn_win.reset()
 
         # --- 4b. Room coupling: learn k_ij, then refresh effective (b_eff,Text_eff) ---
         # Runs before the calibration/hysteresis branches so the thermal twin in

@@ -5,6 +5,7 @@ cycle: effective-parameter folding, the diagnostics block, snapshot publishing,
 and persistence (including the no-coupling regression to identity).
 """
 
+import time
 from unittest.mock import MagicMock
 
 from custom_components.vtherm_smartpi.algo import SmartPI
@@ -257,6 +258,84 @@ def test_model_aperture_does_not_trip_off():
 
     algo.attach_coupling_view(_View())
     assert algo._coupling_trip_off_active() is False
+
+
+class _GateView:
+    """View whose physical-open state can be toggled; resolvable for nothing."""
+
+    uid = "A"
+
+    def __init__(self, open_):
+        self._open = open_
+
+    def any_open(self):
+        return self._open
+
+    def open_edges(self):
+        return []
+
+    def open_apertures(self):
+        # MODEL policy so trip-off does not fire; we are exercising the
+        # base-learning freeze/reset gate, not the trip-off path.
+        return [OpenAperture("N", "room", "door", "model")] if self._open else []
+
+    def component_power_w(self):
+        return 0.0
+
+    def publish(self, snap):
+        pass
+
+
+def test_open_aperture_resets_active_learning_window(monkeypatch):
+    """When an aperture is open and a base-learning window is in progress, the
+    coupled-open gate must abandon that window so a post-close sample is never
+    differenced against a pre-open sample across the coupled period."""
+    algo = make_smartpi()
+    algo.attach_coupling_view(_GateView(open_=True))
+    learn_calls = []
+    monkeypatch.setattr(algo, "update_learning", lambda **k: learn_calls.append(True))
+    # Prime the timer so dt_min > 0 (skip the first-run reboot freeze).
+    algo._last_calculate_time = time.monotonic() - 60.0
+    # Simulate an in-progress base-learning window started before the door opened.
+    algo.learn_win._active = True
+    algo.learn_win._start_ts = time.monotonic() - 600.0
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == []                 # base learning frozen while open
+    assert algo.learn_win.active is False     # contaminated window abandoned
+    assert algo.learn_win.start_ts is None
+
+
+def test_open_aperture_without_active_window_does_not_call_reset(monkeypatch):
+    """No active window -> nothing to abandon; the gate must not spuriously reset."""
+    algo = make_smartpi()
+    algo.attach_coupling_view(_GateView(open_=True))
+    monkeypatch.setattr(algo, "update_learning", lambda **k: None)
+    reset_calls = []
+    monkeypatch.setattr(algo.learn_win, "reset", lambda: reset_calls.append(True))
+    algo._last_calculate_time = time.monotonic() - 60.0
+    algo.learn_win._active = False
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert reset_calls == []
+
+
+def test_closed_aperture_runs_learning_and_keeps_window(monkeypatch):
+    """Regression-critical: with no aperture open, behaviour is unchanged — the
+    base learning update runs and the coupling gate does not reset the window."""
+    algo = make_smartpi()
+    algo.attach_coupling_view(_GateView(open_=False))
+    learn_calls = []
+    monkeypatch.setattr(algo, "update_learning", lambda **k: learn_calls.append(True))
+    reset_calls = []
+    monkeypatch.setattr(algo.learn_win, "reset", lambda: reset_calls.append(True))
+    algo._last_calculate_time = time.monotonic() - 60.0
+    algo.learn_win._active = True
+    algo.learn_win._start_ts = time.monotonic() - 600.0
+    algo.calculate(target_temp=21.0, current_temp=20.0, ext_current_temp=5.0,
+                   hvac_mode=VThermHvacMode_HEAT)
+    assert learn_calls == [True]   # base learning ran (door closed)
+    assert reset_calls == []        # coupling gate did not touch the window
 
 
 def test_reset_learning_clears_coupling():
