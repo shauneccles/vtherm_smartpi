@@ -74,3 +74,45 @@ def select_apertures(
             )
         )
     return out
+
+
+@dataclass(frozen=True)
+class VThermNode:
+    unique_id: str
+    label: str
+    is_smartpi: bool
+
+
+@dataclass(frozen=True)
+class AreaNode:
+    area_id: str
+    label: str
+    temp_sensor: str | None
+
+
+@dataclass(frozen=True)
+class CandidateNodes:
+    controlled: list[tuple[str, str]]  # (value="vt:<uid>", label)
+    sensed: list[tuple[str, str]]      # (value="area:<temp_sensor>", label)
+
+
+def resolve_effective_area(
+    entity_area_id: str | None, device_area_id: str | None
+) -> str | None:
+    """HA-standard area resolution: entity area, else the entity's device area."""
+    return entity_area_id or device_area_id
+
+
+def build_candidate_nodes(
+    vtherms: list[VThermNode], areas: list[AreaNode], self_uid: str | None
+) -> CandidateNodes:
+    """Far-endpoint choices: SmartPI VTherms (excl. self) + areas with a temp sensor."""
+    controlled = [
+        (f"vt:{vt.unique_id}", vt.label)
+        for vt in vtherms
+        if vt.is_smartpi and vt.unique_id != self_uid
+    ]
+    sensed = [
+        (f"area:{a.temp_sensor}", a.label) for a in areas if a.temp_sensor
+    ]
+    return CandidateNodes(controlled=controlled, sensed=sensed)

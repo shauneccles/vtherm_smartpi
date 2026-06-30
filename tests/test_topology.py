@@ -67,3 +67,33 @@ def test_aperture_id_of_handles_legacy_key():
     assert aperture_id_of({CONF_CONN_APERTURE_SENSOR: "binary_sensor.a"}) == "binary_sensor.a"
     assert aperture_id_of({CONF_CONN_DOOR_SENSOR: "binary_sensor.legacy"}) == "binary_sensor.legacy"
     assert aperture_id_of({}) is None
+
+
+from custom_components.vtherm_smartpi.smartpi.topology import (
+    AreaNode,
+    VThermNode,
+    build_candidate_nodes,
+    resolve_effective_area,
+)
+
+
+def test_resolve_effective_area_prefers_entity_then_device():
+    assert resolve_effective_area("bedroom", "kitchen") == "bedroom"
+    assert resolve_effective_area(None, "kitchen") == "kitchen"
+    assert resolve_effective_area(None, None) is None
+
+
+def test_candidate_nodes_controlled_excludes_self_and_non_smartpi():
+    vtherms = [
+        VThermNode("uid-self", "Bedroom heating", True),
+        VThermNode("uid-play", "Playroom heating", True),
+        VThermNode("uid-ac", "Living area AC", False),
+    ]
+    areas = [
+        AreaNode("kitchen", "Kitchen", "sensor.kitchen_sensor_temperature"),
+        AreaNode("toilet", "Toilet", None),
+    ]
+    nodes = build_candidate_nodes(vtherms, areas, self_uid="uid-self")
+    assert nodes.controlled == [("vt:uid-play", "Playroom heating")]
+    # sensed includes only areas with a temp sensor
+    assert nodes.sensed == [("area:sensor.kitchen_sensor_temperature", "Kitchen")]
